@@ -17,7 +17,7 @@ def run_cli(args: list[str]) -> subprocess.CompletedProcess:
 def test_cli_help():
     result = run_cli(["--help"])
     assert result.returncode == 0
-    assert "Find eclipse minimum" in result.stdout
+    assert "reflection method" in result.stdout
 
 
 def test_cli_find_basic():

@@ -17,9 +17,28 @@ except ImportError:
 
 
 def parse_datetime_column(values: list[str]) -> tuple[np.ndarray, Optional[np.datetime64]]:
-    """Parse ISO datetime strings to minutes from first timestamp.
+    """Parse ISO datetime strings to minutes elapsed from the first timestamp.
 
-    Returns (x_minutes, t0_utc) where t0_utc is the first timestamp as datetime64[ms] (UTC).
+    Accepts ISO-8601 timestamps with either a space or ``T`` separator
+    (e.g. AAVSO ``DATE-OBS`` values like ``2026-08-08 20:43:16.427``).
+    Timestamps are treated as naive UTC, following the AAVSO convention.
+
+    Parameters
+    ----------
+    values : list[str]
+        ISO datetime strings to parse.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.datetime64 or None]
+        ``(x_minutes, t0_utc)`` where ``x_minutes`` is the time of each point
+        in minutes relative to the earliest timestamp, and ``t0_utc`` is that
+        earliest timestamp as ``datetime64[ms]`` (UTC).
+
+    Raises
+    ------
+    ValueError
+        If any value cannot be parsed as an ISO datetime.
     """
     import datetime
 
@@ -42,17 +61,54 @@ def parse_datetime_column(values: list[str]) -> tuple[np.ndarray, Optional[np.da
 
 
 def parse_jd_column(values: list[str]) -> np.ndarray:
-    """Parse Julian Date column (float)."""
+    """Parse a Julian Date (or HJD/MJD) column to floats.
+
+    Parameters
+    ----------
+    values : list[str]
+        String representations of Julian Dates.
+
+    Returns
+    -------
+    np.ndarray
+        Float array of Julian Dates.
+    """
     return np.array([float(v) for v in values], dtype=float)
 
 
 def parse_phase_column(values: list[str]) -> np.ndarray:
-    """Parse phase column (float 0-1)."""
+    """Parse a phase column (values in 0-1) to floats.
+
+    Parameters
+    ----------
+    values : list[str]
+        String representations of phases.
+
+    Returns
+    -------
+    np.ndarray
+        Float array of phases.
+    """
     return np.array([float(v) for v in values], dtype=float)
 
 
 def mag_to_flux(mag: np.ndarray) -> np.ndarray:
-    """Convert magnitudes to relative flux (median-normalized)."""
+    """Convert magnitudes to median-normalized relative flux.
+
+    Applies the standard photometric relation ``F = 10 ** (-0.4 * (mag - m0))``
+    where ``m0`` is the median magnitude. The result is dimensionless and
+    centered near unity.
+
+    Parameters
+    ----------
+    mag : np.ndarray
+        Magnitude values.
+
+    Returns
+    -------
+    np.ndarray
+        Relative flux values (median-normalized).
+    """
     median_mag = float(np.median(mag))
     return 10.0 ** (-0.4 * (mag - median_mag))
 
@@ -65,21 +121,44 @@ def read_csv_file(
     time_format: str,
     invert_mag: bool,
 ) -> tuple[np.ndarray, np.ndarray, Optional[np.ndarray], Optional[np.datetime64]]:
-    """Read CSV file and return x, y, w, t0_utc.
+    """Read a CSV file and extract ``x``, ``y`` and optional weights.
 
-    Handles AAVSO extended format where header is in a comment line like:
-    #NAME,DATE-OBS,MAG,MAG_ERR,...
+    Handles AAVSO-style extended format where the column header is in a
+    comment line like ``#NAME,DATE-OBS,MAG,MAG_ERR,...``. Falls back to
+    treating the first non-comment line as the header.
 
-    Args:
-        path: Path to CSV file
-        x_col: X column name
-        y_col: Y column name
-        w_col: Weight column name (or None)
-        time_format: "jd" | "hjd" | "mjd" | "iso" | "minutes"
-        invert_mag: Convert MAG to flux
+    Parameters
+    ----------
+    path : str
+        Path to the CSV file.
+    x_col : str
+        Name of the column holding the time / abscissa values.
+    y_col : str
+        Name of the column holding the magnitude / flux values.
+    w_col : str or None
+        Name of the column holding measurement uncertainties, or None.
+    time_format : str
+        One of ``"jd"``, ``"hjd"``, ``"mjd"``, ``"iso"``, ``"phase"``,
+        ``"minutes"``.
+    invert_mag : bool
+        If True, convert magnitudes to relative flux (``mag_to_flux``).
 
-    Returns:
-        x, y, w, t0_utc (None if time_format != "iso")
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, np.ndarray or None, np.datetime64 or None]
+        ``(x, y, w, t0_utc)`` where:
+        - ``x`` : abscissae in the units implied by ``time_format``
+          (for ``"iso"`` these are minutes from the first timestamp)
+        - ``y`` : ordinates (flux or magnitude)
+        - ``w`` : weights ``1 / sigma``, or None if no ``w_col``
+        - ``t0_utc`` : earliest timestamp as ``datetime64[ms]``, or None
+          unless ``time_format == "iso"``
+
+    Raises
+    ------
+    ValueError
+        If no header or no data rows are found, a requested column is
+        missing, or a value cannot be converted.
     """
     import csv
 
@@ -158,7 +237,27 @@ def read_csv_file(
 
 
 def result_to_dict(result: MinimumResult, t0_utc: Optional[np.datetime64] = None) -> dict:
-    """Convert MinimumResult to JSON-serializable dict."""
+    """Convert a ``MinimumResult`` into a JSON-serializable dictionary.
+
+    When ``t0_utc`` is given, ``x0`` (minutes from origin) is converted to
+    an ISO-8601 UTC timestamp and the uncertainty is expressed in seconds.
+
+    Parameters
+    ----------
+    result : MinimumResult
+        Result of ``find_minimum``.
+    t0_utc : np.datetime64 or None, optional
+        Time origin (earliest timestamp of the light curve). If None, only
+        the raw x0 values are included in the output.
+
+    Returns
+    -------
+    dict
+        Dictionary with keys ``x0``, ``x0_std``, ``x0_lo``, ``x0_hi``,
+        ``sigma_min``, ``n_points``, ``n_bootstrap`` and, when ``t0_utc`` is
+        given, ``utc_time`` (ISO-8601 with trailing ``Z``) and
+        ``utc_uncertainty_s``.
+    """
     out = {
         "x0": float(result.x0),
         "x0_std": float(result.x0_std),
@@ -220,10 +319,49 @@ def find(
     plot: Optional[Path],
     plot_format: str,
 ):
-    """Find eclipse minimum in a light curve using the reflection method.
+    """Find an eclipse minimum in a light curve using the reflection method.
 
-    Reads CSV (AAVSO format with # comments supported), converts time/magnitude,
-    runs the reflection method, outputs JSON with x0 and uncertainties.
+    Reads a CSV file (AAVSO-style extended format with ``#`` comment header
+    is supported), converts time and magnitude columns, runs the reflection
+    method via :func:`reflection_method.find_minimum`, and prints a JSON
+    report with the minimum location ``x0`` and its uncertainties. An
+    optional diagnostic plot can be written with ``--plot`` (requires the
+    ``[plot]`` extra).
+
+    Parameters
+    ----------
+    input_file : Path
+        Path to the input CSV file.
+    x_col : str
+        Name of the time column. Default ``DATE-OBS``.
+    y_col : str
+        Name of the magnitude/flux column. Default ``MAG``.
+    w_col : str or None
+        Name of the uncertainty column, or None for equal weights.
+    time_format : str
+        One of ``jd``, ``hjd``, ``mjd``, ``iso``, ``minutes``.
+    invert_mag : bool
+        Convert magnitudes to relative flux. Default True.
+    pts_per_knot : int
+        Points per spline knot. Default 10.
+    degree : int
+        Spline degree (1-5). Default 3.
+    n_scan : int
+        Scan resolution for the main x0 search. Default 200.
+    x0_window : float
+        Scan window as a fraction of the x range. Default 0.1.
+    n_bootstrap : int
+        Bootstrap iterations for uncertainty estimation. Default 60.
+    n_scan_boot : int
+        Scan resolution per bootstrap iteration. Default 80.
+    seed : int or None
+        Random seed for reproducibility.
+    output : Path or None
+        Write JSON to this file instead of stdout.
+    plot : Path or None
+        Save a diagnostic plot to this file.
+    plot_format : str
+        Plot format: ``png``, ``pdf`` or ``svg``.
     """
     # Read data
     try:

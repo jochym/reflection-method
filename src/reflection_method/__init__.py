@@ -22,7 +22,6 @@ try:
     from .plot import (
         plot_original_spline,
         plot_scan,
-        plot_composite,
         plot_all,
     )
     _PLOT_AVAILABLE = True
@@ -45,6 +44,5 @@ if _PLOT_AVAILABLE:
     __all__.extend([
         "plot_original_spline",
         "plot_scan",
-        "plot_composite",
         "plot_all",
     ])

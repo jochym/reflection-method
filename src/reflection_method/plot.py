@@ -1,6 +1,13 @@
-"""Plotting utilities for reflection-method (optional [plot] extra).
+"""Plotting utilities for reflection-method (optional `[plot]` extra).
 
-Uses matplotlib. All functions accept an optional `ax` parameter for subplot embedding.
+Uses matplotlib. All functions accept an optional `ax` parameter for subplot
+embedding. The main function `plot_all` creates the standard 4-panel composite
+figure matching the notebook visualization.
+
+Dependencies
+------------
+Requires the `[plot]` extra: ``pip install "reflection-method[plot]"``.
+This installs matplotlib as a dependency.
 """
 
 from typing import Optional
@@ -23,7 +30,45 @@ def plot_original_spline(
     x_unit: str = "",
     ax: Optional[Axes] = None,
 ) -> Axes:
-    """Plot original data, spline, and x0 vertical line."""
+    """Plot original data, initial spline fit, and the optimal ``x₀`` line.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        Original abscissae (time, phase, etc.).
+    y : np.ndarray
+        Original ordinates (flux, magnitude, etc.).
+    spl1 : LSQUnivariateSpline
+        Initial spline fit to the original data (without reflection).
+    x0_opt : float
+        Optimal reflection point found by the reflection method.
+    x0_std : float
+        Bootstrap standard error of ``x0_opt``.
+    xlabel : str, optional
+        Label for the x-axis (without unit). Default "Time".
+    ylabel : str, optional
+        Label for the y-axis. Default "relative magnitude".
+    x_unit : str, optional
+        Unit string for the x-axis (e.g., "min", "JD", "phase"). Appended to
+        the xlabel in brackets. Default "" (no unit).
+    ax : matplotlib.axes.Axes or None, optional
+        Axes to plot on. If None, a new figure and axes are created.
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+        The axes object with the plot.
+
+    Examples
+    --------
+    >>> from reflection_method import fit_spline, find_x0
+    >>> from reflection_method.plot import plot_original_spline
+    >>> import matplotlib.pyplot as plt
+    >>> spl1 = fit_spline(x, y, pts_per_knot=10)
+    >>> x0_opt, _, _ = find_x0(x, y)
+    >>> ax = plot_original_spline(x, y, spl1, x0_opt, 0.01, xlabel="Phase", x_unit="")
+    >>> plt.show()
+    """
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 4))
 
@@ -59,7 +104,36 @@ def plot_scan(
     x_unit: str = "",
     ax: Optional[Axes] = None,
 ) -> Axes:
-    """Plot σ₁, σ₂, and spline fit to σ₂ with vertical lines at minima."""
+    """Plot σ₁, σ₂, and spline fit to σ₂ with vertical lines at minima.
+
+    Parameters
+    ----------
+    x0_grid : np.ndarray
+        Grid of trial reflection points.
+    sigma1 : np.ndarray
+        σ values with respect to the original spline (σ₁).
+    sigma2 : np.ndarray
+        σ values with respect to the refitted spline (σ₂).
+    spl_sigma : LSQUnivariateSpline
+        Cubic spline interpolating ``(x0_grid, sigma2)``.
+    x0_opt : float
+        Optimal reflection point from the refined minimum.
+    x0_grid_idx_min : int
+        Index of the minimum ``sigma2`` on the grid (before refinement).
+    xlabel : str, optional
+        Label for the x-axis. Default "x₀".
+    ylabel : str, optional
+        Label for the y-axis. Default "residual σ".
+    x_unit : str, optional
+        Unit string for the x-axis. Default "".
+    ax : matplotlib.axes.Axes or None, optional
+        Axes to plot on. If None, a new figure and axes are created.
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+        The axes object with the plot.
+    """
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 4))
 
@@ -101,9 +175,92 @@ def plot_all(
     x_unit: str = "",
     **kwargs,
 ) -> Figure:
-    """Create the full 4-panel figure.
+    """Create the standard 4-panel reflection-method diagnostic figure.
 
-    Returns the Figure object for saving.
+    Produces a 2×2 figure with the following panels:
+
+    1. **Main (left, full height)**: Light curve with original data, reflected
+       points, original spline, refitted spline (data + reflection), and
+       the optimal ``x₀`` vertical line with uncertainty.
+    2. **σ₂ scan (top right)**: The ``σ₂(x₀)`` curve as data points with the
+       interpolating spline, and the optimal ``x₀`` line. X-axis limited to
+       ``±3σ`` around the optimum for consistency with the histogram.
+    3. **Bootstrap histogram (bottom right)**: Distribution of bootstrap
+       ``x₀`` estimates with the optimal ``x₀`` line. Same x-axis limits
+       as the σ₂ scan.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        Original abscissae.
+    y : np.ndarray
+        Original ordinates.
+    spl1 : LSQUnivariateSpline
+        Initial spline fit to original data.
+    xr : np.ndarray
+        Reflected abscissae (``2 * x0_opt - x``).
+    spl2 : LSQUnivariateSpline
+        Spline fit to combined (original + reflected) data.
+    x0_opt : float
+        Optimal reflection point.
+    x0_std : float
+        Bootstrap standard error of ``x0_opt``.
+    x0_grid : np.ndarray
+        Scan grid of trial ``x₀`` values.
+    sigma2 : np.ndarray
+        ``σ₂`` values at each grid point.
+    spl_sigma : LSQUnivariateSpline
+        Cubic spline interpolating ``(x0_grid, sigma2)``.
+    x0_boot : np.ndarray
+        Array of bootstrap ``x₀`` estimates (length = ``n_bootstrap``).
+    xlabel : str, optional
+        Label for the main x-axis (e.g., "Time", "Phase"). Default "Time".
+    ylabel : str, optional
+        Label for the y-axis (e.g., "relative magnitude", "Flux"). Default
+        "relative magnitude".
+    x_unit : str, optional
+        Unit for the x-axis (e.g., "min", "JD", "HJD", "phase"). Appended
+        to axis labels and ``x₀`` labels. Default "".
+    **kwargs : dict
+        Additional keyword arguments (currently unused, for forward
+        compatibility).
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The created figure object. Call ``fig.savefig("output.png")`` to save.
+
+    Notes
+    -----
+    - The right-hand panels (σ₂ scan and histogram) share the same x-axis
+      limits: ``x₀ ± 3 * x0_std``. This ensures consistent visual comparison.
+    - The σ₂ scan y-limits are automatically set to show the minimum region
+      with a 10% padding.
+    - The figure size is 10×8 inches with width ratios 0.62:0.38 and
+      height ratios 0.5:0.5.
+    - The layout uses ``plt.tight_layout()`` for automatic spacing.
+
+    Examples
+    --------
+    >>> from reflection_method import find_minimum, find_x0, fit_spline, combine
+    >>> from reflection_method.plot import plot_all
+    >>> import matplotlib.pyplot as plt
+    >>>
+    >>> result = find_minimum(x, y)
+    >>> x0_opt, x0_grid, sigma2 = find_x0(x, y)
+    >>> spl1 = fit_spline(x, y)
+    >>> xr = 2 * x0_opt - x
+    >>> spl2 = fit_spline(*combine(x, y, x0_opt))
+    >>> spl_sigma = UnivariateSpline(x0_grid, sigma2, k=3, s=0)
+    >>> # Bootstrap samples needed for histogram:
+    >>> from reflection_method.core import bootstrap_x0
+    >>> _, _, _ = bootstrap_x0(x, y, x0_opt, spl1, 10, 3, None, 60, 80, 0.1)
+    >>> # ... capture x0_boot from bootstrap_x0 internals or re-run
+    >>>
+    >>> fig = plot_all(x, y, spl1, xr, spl2, x0_opt, result.x0_std,
+    ...                x0_grid, sigma2, spl_sigma, x0_boot,
+    ...                xlabel="Time", ylabel="Flux", x_unit="min")
+    >>> fig.savefig("output.png", dpi=150, bbox_inches="tight")
     """
     fig = plt.figure(figsize=(10, 8))
     gs = fig.add_gridspec(2, 2, width_ratios=[0.62, 0.38], height_ratios=[0.5, 0.5])

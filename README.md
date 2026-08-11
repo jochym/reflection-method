@@ -49,7 +49,32 @@ Result is a `MinimumResult` NamedTuple with all values in the **same units as in
 
 See [`examples/quickstart.py`](examples/quickstart.py) for a minimal script.
 
+See [`examples/plot_aavso.py`](examples/plot_aavso.py) for a full worked
+example on **real AAVSO photometry**: it loads two stars, finds each primary
+minimum, and saves the diagnostic figures to `examples/plots/`:
+
+```bash
+pip install "reflection-method[plot]"
+python examples/plot_aavso.py
+```
+
 See [`examples/notebook/example.ipynb`](examples/notebook/example.ipynb) for a full Jupyter notebook with step-by-step walkthrough and plotting.
+
+### Results on real AAVSO data
+
+Eclipse minimum of **V500 Peg** (2026-08-08, 120 points) — `x0 = 94.88 ± 0.18 min`
+from start, i.e. `2026-08-08T22:14:04Z`:
+
+![V500 Peg reflection-method diagnostics](examples/plots/V500_result.png)
+
+Eclipse minimum of **V456 Cyg** (2026-07-29, 142 points) — `x0 = 54.62 ± 0.26 min`
+from start, i.e. `2026-07-29T21:57:19Z`:
+
+![V456 Cyg reflection-method diagnostics](examples/plots/V456_result.png)
+
+Both stars' eclipses aligned to their detected minima:
+
+![Comparison of V500 Peg and V456 Cyg minima](examples/plots/comparison.png)
 
 ### CLI
 

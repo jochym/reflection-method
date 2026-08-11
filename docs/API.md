@@ -102,7 +102,7 @@ interpolation of σ₂(x₀) minimized by bounded Brent's method.
 - **Returns**: `(x0_opt, x0_grid, sigma2_grid)` — refined minimum, scan
   grid, and σ₂ values at each grid point.
 
-### `bootstrap_x0(x, y, x0_opt, spl1, pts_per_knot, degree, w, n_bootstrap=60, n_scan_boot=80, x0_window=0.1, rng=None)`
+### `bootstrap_x0(x, y, x0_opt, spl1, pts_per_knot, degree, w, n_bootstrap=60, n_scan_boot=80, x0_window=0.1, rng=None, return_samples=False)`
 
 Estimate the uncertainty of `x0` via **residual bootstrap**: residuals from
 the initial spline fit are resampled with replacement and added to the fit;
@@ -112,18 +112,24 @@ the full scan is repeated per iteration at reduced resolution.
   `n_bootstrap` — iterations (default 60; use 100–200 for tighter CIs);
   `n_scan_boot` — per-iteration scan resolution (default 80);
   `rng` — `numpy.random.Generator` (default: new PCG64 generator; pass a
-  seeded generator for reproducibility).
+  seeded generator for reproducibility); `return_samples` — when True,
+  append the array of individual bootstrap estimates to the return value.
 - **Returns**: `(x0_std, x0_lo, x0_hi)` — bootstrap standard error (ddof=1)
-  and the 16th/84th percentiles.
+  and the 16th/84th percentiles. With `return_samples=True` a fourth
+  element `x0_boot` (the raw estimates, length `n_bootstrap`) is appended.
 
-### `find_minimum(x, y, pts_per_knot=10, degree=3, w=None, n_scan=200, x0_window=0.1, n_bootstrap=60, n_scan_boot=80, rng=None)`
+### `find_minimum(x, y, pts_per_knot=10, degree=3, w=None, n_scan=200, x0_window=0.1, n_bootstrap=60, n_scan_boot=80, rng=None, return_samples=False)`
 
 Full pipeline: runs `find_x0`, then `bootstrap_x0`, and packages the result
 in a `MinimumResult`.
 
 - **Parameters**: as for the components above (see `find_x0` and
-  `bootstrap_x0`).
-- **Returns**: `MinimumResult`.
+  `bootstrap_x0`); `return_samples` — when True, also return the raw
+  bootstrap estimates.
+- **Returns**: `MinimumResult`. With `return_samples=True`, a tuple
+  `(result, x0_boot)` is returned instead, where `x0_boot` is the array of
+  `n_bootstrap` individual estimates (useful for plotting the bootstrap
+  distribution).
 - **Raises**: `ValueError` for invalid input arrays or failed fits/scans.
 
 **Example**

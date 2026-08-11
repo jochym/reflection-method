@@ -302,7 +302,8 @@ def bootstrap_x0(
     n_scan_boot: int = 80,
     x0_window: float = 0.1,
     rng: Optional[np.random.Generator] = None,
-) -> tuple[float, float, float]:
+    return_samples: bool = False,
+) -> tuple[float, float, float] | tuple[float, float, float, np.ndarray]:
     """Estimate uncertainty of x0 via residual bootstrap.
 
     Performs a residual bootstrap to estimate the sampling distribution of
@@ -339,14 +340,19 @@ def bootstrap_x0(
     rng : np.random.Generator or None, optional
         Random number generator. If None, a new PCG64 generator is created.
         Pass a seeded generator for reproducible results.
+    return_samples : bool, optional
+        If True, additionally return the raw bootstrap estimates ``x0_boot``
+        (e.g. for plotting the bootstrap distribution). Default False.
 
     Returns
     -------
-    tuple[float, float, float]
+    tuple[float, float, float] or tuple[float, float, float, np.ndarray]
         ``(x0_std, x0_lo, x0_hi)`` where:
         - ``x0_std`` : float, bootstrap standard error (sample std, ddof=1)
         - ``x0_lo`` : float, 16th percentile (lower bound of 68% CI)
         - ``x0_hi`` : float, 84th percentile (upper bound of 68% CI)
+        If ``return_samples`` is True, a fourth element ``x0_boot`` (the array
+        of ``n_bootstrap`` individual estimates) is appended.
 
     Notes
     -----
@@ -403,6 +409,8 @@ def bootstrap_x0(
     x0_lo = float(np.percentile(x0_boot, 16))
     x0_hi = float(np.percentile(x0_boot, 84))
 
+    if return_samples:
+        return x0_std, x0_lo, x0_hi, x0_boot
     return x0_std, x0_lo, x0_hi
 
 
@@ -417,7 +425,8 @@ def find_minimum(
     n_bootstrap: int = 60,
     n_scan_boot: int = 80,
     rng: Optional[np.random.Generator] = None,
-) -> MinimumResult:
+    return_samples: bool = False,
+) -> MinimumResult | tuple[MinimumResult, np.ndarray]:
     """Full pipeline: find the light-curve minimum and its uncertainty.
 
     High-level function that runs the complete reflection-method pipeline:
@@ -451,11 +460,14 @@ def find_minimum(
     rng : np.random.Generator or None, optional
         Random number generator for bootstrap. Pass a seeded generator for
         reproducibility. Default is a new PCG64 generator.
+    return_samples : bool, optional
+        If True, additionally return the raw bootstrap estimates ``x0_boot``
+        (e.g. for plotting the bootstrap distribution). Default False.
 
     Returns
     -------
-    MinimumResult
-        NamedTuple with fields:
+    MinimumResult or tuple[MinimumResult, np.ndarray]
+        ``MinimumResult`` with fields:
         - ``x0`` : float, optimal reflection point (same units as input ``x``)
         - ``x0_std`` : float, bootstrap standard error
         - ``x0_lo`` : float, 16th percentile (lower 68% CI)
@@ -463,6 +475,9 @@ def find_minimum(
         - ``sigma_min`` : float, minimum σ₂ value
         - ``n_points`` : int, number of data points
         - ``n_bootstrap`` : int, bootstrap iterations used
+        If ``return_samples`` is True, a tuple ``(result, x0_boot)`` is
+        returned instead, where ``x0_boot`` is the array of ``n_bootstrap``
+        individual bootstrap estimates.
 
     Raises
     ------
@@ -502,14 +517,14 @@ def find_minimum(
     spl1 = fit_spline(x, y, pts_per_knot, degree, w)
 
     # Bootstrap
-    x0_std, x0_lo, x0_hi = bootstrap_x0(
+    x0_std, x0_lo, x0_hi, x0_boot = bootstrap_x0(
         x, y, x0_opt, spl1, pts_per_knot, degree, w,
-        n_bootstrap, n_scan_boot, x0_window, rng
+        n_bootstrap, n_scan_boot, x0_window, rng, return_samples=True
     )
 
     sigma_min = float(np.min(sigma2))
 
-    return MinimumResult(
+    result = MinimumResult(
         x0=x0_opt,
         x0_std=x0_std,
         x0_lo=x0_lo,
@@ -518,3 +533,6 @@ def find_minimum(
         n_points=len(x),
         n_bootstrap=n_bootstrap,
     )
+    if return_samples:
+        return result, x0_boot
+    return result

@@ -381,7 +381,7 @@ def find(
 
     # Run core algorithm
     try:
-        result = find_minimum(
+        result, x0_boot = find_minimum(
             x, y,
             pts_per_knot=pts_per_knot,
             degree=degree,
@@ -391,6 +391,7 @@ def find(
             n_bootstrap=n_bootstrap,
             n_scan_boot=n_scan_boot,
             rng=rng,
+            return_samples=True,
         )
     except Exception as e:
         click.echo(f"Error in algorithm: {e}", err=True)
@@ -425,9 +426,7 @@ def find(
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
             from reflection_method import find_x0, fit_spline, combine
-            from reflection_method.core import spline_variance, bootstrap_x0
             from scipy.interpolate import UnivariateSpline
-            from scipy.optimize import minimize_scalar
 
             # Reconstruct intermediate data
             x0_opt, x0_grid, sigma2 = find_x0(x, y, pts_per_knot, degree, w, n_scan, x0_window)
@@ -436,35 +435,6 @@ def find(
             xr = 2 * x0_opt - x
             x_all, y_all, w_all = combine(x, y, x0_opt, w)
             spl2 = fit_spline(x_all, y_all, 2 * pts_per_knot, degree, w_all)
-
-            # Generate bootstrap samples for histogram
-            rng_boot = np.random.default_rng(seed) if seed is not None else None
-            residuals = y - spl1(x)
-            n_pts = len(x)
-            x0_boot = np.empty(n_bootstrap)
-            xmin, xmax = float(x.min()), float(x.max())
-            window_width = x0_window * (xmax - xmin)
-
-            for k in range(n_bootstrap):
-                y_boot = spl1(x) + residuals[rng_boot.integers(0, n_pts, n_pts)]
-                spl_b = fit_spline(x, y_boot, pts_per_knot, degree, w)
-
-                x_fine = np.linspace(xmin, xmax, 1001)
-                center = float(x_fine[int(np.argmin(spl_b(x_fine)))])
-                lo = max(xmin, center - window_width / 2)
-                hi = min(xmax, center + window_width / 2)
-
-                grid = np.linspace(lo, hi, n_scan_boot)
-                sig = np.empty(len(grid))
-
-                for i, x0 in enumerate(grid):
-                    xs, ys, ws = combine(x, y_boot, x0, w)
-                    sp = fit_spline(xs, ys, 2 * pts_per_knot, degree, ws)
-                    sig[i] = np.sqrt(spline_variance(sp, xs, ys))
-
-                sig = np.maximum(sig, 1e-6)
-                spl_sig = UnivariateSpline(grid, sig, k=3, s=0)
-                x0_boot[k] = minimize_scalar(spl_sig, bounds=(grid[0], grid[-1]), method="bounded").x
 
             # Determine axis labels and units
             if time_format == "iso":

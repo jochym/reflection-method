@@ -301,7 +301,6 @@ def find(
 
             # Generate bootstrap samples for histogram
             rng_boot = np.random.default_rng(seed) if seed is not None else None
-            # Use the same bootstrap function logic but capture x0_boot array
             residuals = y - spl1(x)
             n_pts = len(x)
             x0_boot = np.empty(n_bootstrap)
@@ -329,10 +328,32 @@ def find(
                 spl_sig = UnivariateSpline(grid, sig, k=3, s=0)
                 x0_boot[k] = minimize_scalar(spl_sig, bounds=(grid[0], grid[-1]), method="bounded").x
 
+            # Determine axis labels and units
+            if time_format == "iso":
+                xlabel = "Time"
+                ylabel = "relative magnitude"
+                x_unit = "min"
+            elif time_format in ("jd", "hjd", "mjd"):
+                xlabel = "Time"
+                ylabel = "relative magnitude"
+                x_unit = time_format.upper()
+            elif time_format == "phase":
+                xlabel = "Phase"
+                ylabel = "relative magnitude"
+                x_unit = ""
+            elif time_format == "minutes":
+                xlabel = "Time"
+                ylabel = "relative magnitude"
+                x_unit = "min"
+            else:
+                xlabel = "Time"
+                ylabel = "relative magnitude"
+                x_unit = ""
+
             fig = plot_all(
                 x, y, spl1, xr, spl2, x0_opt, result.x0_std,
                 x0_grid, sigma2, spl_sigma, x0_boot,
-                xlabel=x_col, ylabel=y_col
+                xlabel=xlabel, ylabel=ylabel, x_unit=x_unit
             )
             fig.savefig(plot, format=plot_format, dpi=150, bbox_inches="tight")
             plt.close(fig)

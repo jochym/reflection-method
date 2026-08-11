@@ -286,16 +286,54 @@ def find(
             import matplotlib
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
-
-            # Need to reconstruct intermediate data for plotting
             from reflection_method import find_x0, fit_spline, combine
+            from reflection_method.core import spline_variance, bootstrap_x0
+            from scipy.interpolate import UnivariateSpline
+            from scipy.optimize import minimize_scalar
+
+            # Reconstruct intermediate data
             x0_opt, x0_grid, sigma2 = find_x0(x, y, pts_per_knot, degree, w, n_scan, x0_window)
             spl1 = fit_spline(x, y, pts_per_knot, degree, w)
+            spl_sigma = UnivariateSpline(x0_grid, sigma2, k=3, s=0)
             xr = 2 * x0_opt - x
             x_all, y_all, w_all = combine(x, y, x0_opt, w)
             spl2 = fit_spline(x_all, y_all, 2 * pts_per_knot, degree, w_all)
 
-            fig = plot_all(result, x, y, spl1, xr, spl2, x0_grid, sigma2, None, np.array([]))
+            # Generate bootstrap samples for histogram
+            rng_boot = np.random.default_rng(seed) if seed is not None else None
+            # Use the same bootstrap function logic but capture x0_boot array
+            residuals = y - spl1(x)
+            n_pts = len(x)
+            x0_boot = np.empty(n_bootstrap)
+            xmin, xmax = float(x.min()), float(x.max())
+            window_width = x0_window * (xmax - xmin)
+
+            for k in range(n_bootstrap):
+                y_boot = spl1(x) + residuals[rng_boot.integers(0, n_pts, n_pts)]
+                spl_b = fit_spline(x, y_boot, pts_per_knot, degree, w)
+
+                x_fine = np.linspace(xmin, xmax, 1001)
+                center = float(x_fine[int(np.argmin(spl_b(x_fine)))])
+                lo = max(xmin, center - window_width / 2)
+                hi = min(xmax, center + window_width / 2)
+
+                grid = np.linspace(lo, hi, n_scan_boot)
+                sig = np.empty(len(grid))
+
+                for i, x0 in enumerate(grid):
+                    xs, ys, ws = combine(x, y_boot, x0, w)
+                    sp = fit_spline(xs, ys, 2 * pts_per_knot, degree, ws)
+                    sig[i] = np.sqrt(spline_variance(sp, xs, ys))
+
+                sig = np.maximum(sig, 1e-6)
+                spl_sig = UnivariateSpline(grid, sig, k=3, s=0)
+                x0_boot[k] = minimize_scalar(spl_sig, bounds=(grid[0], grid[-1]), method="bounded").x
+
+            fig = plot_all(
+                x, y, spl1, xr, spl2, x0_opt, result.x0_std,
+                x0_grid, sigma2, spl_sigma, x0_boot,
+                xlabel=x_col, ylabel=y_col
+            )
             fig.savefig(plot, format=plot_format, dpi=150, bbox_inches="tight")
             plt.close(fig)
             click.echo(f"Plot saved to {plot}", err=True)

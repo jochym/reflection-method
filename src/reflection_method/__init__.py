@@ -18,6 +18,17 @@ from .core import (
 )
 from .result import MinimumResult
 
+try:
+    from .plot import (
+        plot_original_spline,
+        plot_scan,
+        plot_composite,
+        plot_all,
+    )
+    _PLOT_AVAILABLE = True
+except ImportError:
+    _PLOT_AVAILABLE = False
+
 __version__ = "0.1.0"
 
 __all__ = [
@@ -29,3 +40,11 @@ __all__ = [
     "bootstrap_x0",
     "find_minimum",
 ]
+
+if _PLOT_AVAILABLE:
+    __all__.extend([
+        "plot_original_spline",
+        "plot_scan",
+        "plot_composite",
+        "plot_all",
+    ])

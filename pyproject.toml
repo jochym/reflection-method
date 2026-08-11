@@ -26,6 +26,9 @@ classifiers = [
 plot = ["matplotlib>=3.7"]
 cli = ["click>=8.1"]
 
+[project.scripts]
+reflection-method = "reflection_method.cli:find"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

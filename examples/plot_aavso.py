@@ -48,16 +48,18 @@ def load_aavso(
     x_col: str = "DATE-OBS",
     y_col: str = "MAG",
     err_col: str = "MAG_ERR",
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.datetime64, str]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.datetime64, str, np.ndarray]:
     """Read an AAVSO extended-format file into arrays.
 
     Returns
     -------
-    tuple[np.ndarray, np.ndarray, np.ndarray, np.datetime64, str]
-        ``(x_minutes, y_flux, w, t0_utc, star_name)`` where ``x`` is the time
-        in minutes from the first observation, ``y`` the median-normalized
-        relative flux, ``w`` the weights ``1 / MAG_ERR``, ``t0_utc`` the first
-        timestamp and ``star_name`` the value of the ``NAME`` column.
+    tuple[np.ndarray, np.ndarray, np.ndarray, np.datetime64, str, np.ndarray]
+        ``(x_minutes, y_flux, w, t0_utc, star_name, y_err)`` where ``x`` is
+        the time in minutes from the first observation, ``y`` the
+        median-normalized relative flux, ``w`` the weights ``1 / MAG_ERR``,
+        ``t0_utc`` the first timestamp, ``star_name`` the value of the
+        ``NAME`` column and ``y_err`` the flux error propagated from
+        ``MAG_ERR`` via ``dy/dmag = -0.4 ln(10) y``.
     """
     lines = Path(path).read_text(encoding="utf-8").splitlines()
 
@@ -87,13 +89,15 @@ def load_aavso(
 
     err = np.array([float(r[err_col]) for r in rows])
     w = 1.0 / np.maximum(err, 1e-6)
+    # Flux uncertainty propagated from the magnitude uncertainty
+    y_err = 0.4 * np.log(10.0) * y * err
 
-    return x, y, w, t0, star_name
+    return x, y, w, t0, star_name, y_err
 
 
 def analyze_star(path: Path, out_png: Path) -> tuple[str, float, float]:
     """Run the full pipeline on one star and save the diagnostic figure."""
-    x, y, w, t0, star_name = load_aavso(path)
+    x, y, w, t0, star_name, _ = load_aavso(path)
     rng = np.random.default_rng(SEED)
 
     # High-level pipeline (returns the bootstrap samples for the histogram)
@@ -143,16 +147,17 @@ def analyze_star(path: Path, out_png: Path) -> tuple[str, float, float]:
 
 
 def comparison_figure(results: list[tuple[str, float, float]], out_png: Path) -> None:
-    """Overlay both light curves with minima aligned at zero."""
+    """Overlay both light curves, minima aligned at zero, as scatter with flux errors."""
     fig, ax = plt.subplots(figsize=(9, 5))
     for path, (name, x0, x0_std) in zip(STARS, results):
-        x, y, w, t0, _ = load_aavso(path)
+        x, y, w, t0, _, y_err = load_aavso(path)
         color = "C0" if "V500" in str(path) else "C1"
-        ax.scatter(x - x0, y, s=8, alpha=0.55, color=color, edgecolors="none",
-                   label=f"{name} (x0 = {x0:.2f} ± {x0_std:.2f} min)")
-        # Aligned median-filtered profile for a cleaner look
-        order = np.argsort(x - x0)
-        ax.plot(x[order] - x0, y[order], color=color, linewidth=1, alpha=0.4)
+        ax.errorbar(
+            x - x0, y, yerr=y_err,
+            fmt="o", ms=3, linewidth=0, alpha=0.6,
+            color=color, ecolor=color, elinewidth=0.5, capsize=0,
+            label=f"{name} (x0 = {x0:.2f} ± {x0_std:.2f} min)",
+        )
     ax.axvline(0, color="red", linewidth=1.5)
     ax.set_xlabel("Time from minimum [min]")
     ax.set_ylabel("relative flux")

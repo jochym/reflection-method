@@ -1,0 +1,19 @@
+Metadata-Version: 2.4
+Name: reflection-method
+Version: 0.1.0
+Summary: Eclipsing binary minimum finder using the reflection method
+Author: Jochym
+License: MIT
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Science/Research
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Topic :: Scientific/Engineering :: Astronomy
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.24
+Requires-Dist: scipy>=1.10
+Provides-Extra: plot
+Requires-Dist: matplotlib>=3.7; extra == "plot"
+Provides-Extra: cli
+Requires-Dist: click>=8.1; extra == "cli"

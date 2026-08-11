@@ -1,0 +1,10 @@
+pyproject.toml
+src/reflection_method/__init__.py
+src/reflection_method/core.py
+src/reflection_method/result.py
+src/reflection_method.egg-info/PKG-INFO
+src/reflection_method.egg-info/SOURCES.txt
+src/reflection_method.egg-info/dependency_links.txt
+src/reflection_method.egg-info/requires.txt
+src/reflection_method.egg-info/top_level.txt
+tests/test_core.py

@@ -54,12 +54,12 @@ def load_aavso(
     Returns
     -------
     tuple[np.ndarray, np.ndarray, np.ndarray, np.datetime64, str, np.ndarray]
-        ``(x_minutes, y_flux, w, t0_utc, star_name, y_err)`` where ``x`` is
+        ``(x_minutes, y_flux, w, t0_utc, star_name, mag_err)`` where ``x`` is
         the time in minutes from the first observation, ``y`` the
         median-normalized relative flux, ``w`` the weights ``1 / MAG_ERR``,
         ``t0_utc`` the first timestamp, ``star_name`` the value of the
-        ``NAME`` column and ``y_err`` the flux error propagated from
-        ``MAG_ERR`` via ``dy/dmag = -0.4 ln(10) y``.
+        ``NAME`` column and ``mag_err`` the photometric error of each point
+        in magnitudes (the ``MAG_ERR`` column as-is).
     """
     lines = Path(path).read_text(encoding="utf-8").splitlines()
 
@@ -89,10 +89,9 @@ def load_aavso(
 
     err = np.array([float(r[err_col]) for r in rows])
     w = 1.0 / np.maximum(err, 1e-6)
-    # Flux uncertainty propagated from the magnitude uncertainty
-    y_err = 0.4 * np.log(10.0) * y * err
+    # MAG_ERR is already the photometric error in magnitudes — used directly
 
-    return x, y, w, t0, star_name, y_err
+    return x, y, w, t0, star_name, err
 
 
 def analyze_star(path: Path, out_png: Path) -> tuple[str, float, float]:
@@ -147,20 +146,24 @@ def analyze_star(path: Path, out_png: Path) -> tuple[str, float, float]:
 
 
 def comparison_figure(results: list[tuple[str, float, float]], out_png: Path) -> None:
-    """Overlay both light curves, minima aligned at zero, as scatter with flux errors."""
+    """Overlay both light curves, minima aligned at zero, as scatter with
+    magnitude errors (yerr = MAG_ERR directly)."""
     fig, ax = plt.subplots(figsize=(9, 5))
     for path, (name, x0, x0_std) in zip(STARS, results):
-        x, y, w, t0, _, y_err = load_aavso(path)
+        x, y, w, t0, _, mag_err = load_aavso(path)
         color = "C0" if "V500" in str(path) else "C1"
+        # Relative magnitude (same shape as flux, error unchanged by the
+        # constant median offset — hence MAG_ERR applies as-is)
+        mag_rel = -2.5 * np.log10(y)
         ax.errorbar(
-            x - x0, y, yerr=y_err,
+            x - x0, mag_rel, yerr=mag_err,
             fmt="o", ms=3, linewidth=0, alpha=0.6,
             color=color, ecolor=color, elinewidth=0.5, capsize=0,
             label=f"{name} (x0 = {x0:.2f} ± {x0_std:.2f} min)",
         )
     ax.axvline(0, color="red", linewidth=1.5)
     ax.set_xlabel("Time from minimum [min]")
-    ax.set_ylabel("relative flux")
+    ax.set_ylabel("relative magnitude")
     ax.set_title("Both eclipses aligned to their detected minima")
     ax.legend(framealpha=0.8)
     ax.grid(True, alpha=0.3)

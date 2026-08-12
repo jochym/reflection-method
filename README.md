@@ -2,6 +2,63 @@
 
 Eclipsing binary minimum finder using the **reflection method** (symmetry about the eclipse minimum).
 
+## What is this for?
+
+About half of all stars are members of binary or multiple systems. When the
+orbital plane of such a system is seen close to edge-on, the two stars
+periodically **eclipse** each other: one star passes in front of the other
+and briefly blocks part of its light. Seen from Earth, the star's brightness
+dips and recovers — this dip is called an *eclipse* (or *minimum*), and a
+plot of brightness against time is a *light curve*.
+
+Measuring the exact moment of an eclipse minimum is one of the most important
+and frequently performed tasks in stellar astronomy:
+
+- it pins down the **period** of the system when combined with other
+  eclipses (eclipse timings),
+- small, periodic shifts in the timing betray the presence of a third body
+  (*light-time effect*), apsidal motion, or mass exchange,
+- it is the standard measurement made by thousands of **amateur observers**
+  of variable stars who submit their data to databases like the AAVSO.
+
+This is harder than it sounds. Real light curves are unevenly sampled, noisy,
+and the minimum is often sampled by only a handful of points. Simply picking
+the dimmest observation is meaningless — the noise can easily shift it by
+minutes. Instead, one needs a robust way to use *all* points in the dip to
+estimate the minimum and its uncertainty.
+
+## How does it work?
+
+The reflection method exploits the **symmetry of an eclipse**: the light
+curve just before the minimum is a mirror image of the curve just after it.
+The algorithm therefore:
+
+1. Fits a smooth B-spline to the observed light curve.
+2. Picks a trial moment `x₀` and **reflects every point about it**
+   (`x → 2x₀ − x`), merging the reflected points with the original ones.
+3. Fits a spline to the combined dataset and measures the residual
+   standard deviation σ₂.
+4. Repeats steps 2–3 for a grid of trial values: the true minimum is the
+   `x₀` that makes the combined data **most symmetric**, i.e. minimises σ₂.
+5. Quantifies the uncertainty with a **bootstrap**: residuals are resampled,
+   the whole search is repeated, and the spread of the resulting `x₀`
+   estimates gives the standard error and a 68% confidence interval.
+
+The method is a modern, statistically well-founded descendant of the classic
+Kwee–van Woerden algorithm (1956) and works with arbitrary, non-uniformly
+sampled data, without folding the light curve.
+
+## Who is it for?
+
+- **Amateur variable-star observers** who want the minimum time of their
+  latest observation run and an honest error bar on it — the
+  [command-line interface](#cli) takes an AAVSO-format CSV and prints a
+  ready-to-report time.
+- **Astronomers and students** who need the algorithm in their own pipeline —
+  the core is a pure, dependency-light Python API with no I/O.
+- **Anyone** curious how an eclipse-minimum timing can be extracted from a
+  noisy light curve.
+
 ## Installation
 
 ```bash

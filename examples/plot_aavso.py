@@ -149,12 +149,10 @@ def comparison_figure(results: list[tuple[str, float, float]], out_png: Path) ->
     """Overlay both light curves, minima aligned at zero, as scatter with
     magnitude errors (yerr = MAG_ERR directly).
 
-    The magnitude axis is inverted (brighter = up) and both axes are zoomed
-    onto the minimum region so that the photometric errors — only ~0.003 mag
-    against a ~0.9 mag eclipse depth — remain visible.
+    The magnitude axis is inverted (brighter = up). The data is plotted
+    exactly as reported by the observer — no zoom or other adjustment.
     """
     fig, ax = plt.subplots(figsize=(9, 5))
-    deepest = None
     for path, (name, x0, x0_std) in zip(STARS, results):
         x, y, w, t0, _, mag_err = load_aavso(path)
         color = "C0" if "V500" in str(path) else "C1"
@@ -167,16 +165,11 @@ def comparison_figure(results: list[tuple[str, float, float]], out_png: Path) ->
             color=color, ecolor=color, elinewidth=1.0, capsize=2.5,
             label=f"{name} (x0 = {x0:.2f} ± {x0_std:.2f} min)",
         )
-        deepest = mag_rel.min() if deepest is None else min(deepest, mag_rel.min())
-
     ax.axvline(0, color="red", linewidth=1.5)
     ax.set_xlabel("Time from minimum [min]")
     ax.set_ylabel("relative magnitude")
-    ax.set_title("Both eclipses aligned to their detected minima (zoom)")
+    ax.set_title("Both eclipses aligned to their detected minima")
     ax.invert_yaxis()  # brighter (smaller magnitude) at the top
-    # Zoom into the dip so the small photometric errors are visible
-    ax.set_xlim(-50, 50)
-    ax.set_ylim(deepest - 0.02, deepest + 0.15)
     ax.legend(framealpha=0.8)
     ax.grid(True, alpha=0.3)
     fig.tight_layout()

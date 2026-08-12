@@ -28,7 +28,6 @@ def test_cli_find_basic():
         "--x-col", "DATE-OBS",
         "--y-col", "MAG",
         "--w-col", "MAG_ERR",
-        "--invert-mag",
         "--time-format", "iso",
         "--pts-per-knot", "10",
         "--degree", "3",
@@ -71,7 +70,6 @@ def test_cli_find_output_file(tmp_path):
         "--x-col", "DATE-OBS",
         "--y-col", "MAG",
         "--w-col", "MAG_ERR",
-        "--invert-mag",
         "--time-format", "iso",
         "--pts-per-knot", "10",
         "--degree", "3",
@@ -95,13 +93,13 @@ def test_cli_reproducibility():
 
     result1 = run_cli([
         str(fixture), "--x-col", "DATE-OBS", "--y-col", "MAG", "--w-col", "MAG_ERR",
-        "--invert-mag", "--time-format", "iso", "--pts-per-knot", "10", "--degree", "3",
+        "--time-format", "iso", "--pts-per-knot", "10", "--degree", "3",
         "--n-scan", "200", "--n-bootstrap", "20", "--seed", "999",
     ])
 
     result2 = run_cli([
         str(fixture), "--x-col", "DATE-OBS", "--y-col", "MAG", "--w-col", "MAG_ERR",
-        "--invert-mag", "--time-format", "iso", "--pts-per-knot", "10", "--degree", "3",
+        "--time-format", "iso", "--pts-per-knot", "10", "--degree", "3",
         "--n-scan", "200", "--n-bootstrap", "20", "--seed", "999",
     ])
 
@@ -125,7 +123,7 @@ def test_cli_different_time_formats():
     # Test iso format (minutes from start)
     result_iso = run_cli([
         str(fixture), "--x-col", "DATE-OBS", "--y-col", "MAG", "--w-col", "MAG_ERR",
-        "--invert-mag", "--time-format", "iso", "--pts-per-knot", "10", "--degree", "3",
+        "--time-format", "iso", "--pts-per-knot", "10", "--degree", "3",
         "--n-scan", "200", "--n-bootstrap", "20", "--seed", "42",
     ])
     assert result_iso.returncode == 0

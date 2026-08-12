@@ -194,6 +194,7 @@ def find_x0(
     n_scan: int = 200,
     x0_window: float = 0.1,
     x0_initial_guess: Optional[float] = None,
+    find_peak: bool = False,
 ) -> tuple[float, np.ndarray, np.ndarray]:
     """Scan trial reflection points to find the minimum of σ₂(x₀).
 
@@ -221,10 +222,16 @@ def find_x0(
     x0_window : float, optional
         Fraction of the total ``x`` range to scan around the initial guess.
         The scan window is ``x0_window * (xmax - xmin)``. Default 0.1 (10%).
+    find_peak : bool, optional
+        If True, the eclipsing feature is a *peak* (maximum) of ``y`` rather
+        than a dip — as when working directly in magnitudes, where the eclipse
+        minimum is the largest magnitude. The initial guess for the scan is
+        then the maximum of the initial spline instead of the minimum.
+        Default False.
     x0_initial_guess : float or None, optional
         Initial guess for the minimum location. If None (default), the minimum
-        of a coarse spline fit to the original data is used (evaluated on
-        a 2001-point grid).
+        (or maximum when ``find_peak=True``) of a coarse spline fit to the
+        original data is used (evaluated on a 2001-point grid).
 
     Returns
     -------
@@ -266,7 +273,10 @@ def find_x0(
     xmin, xmax = float(x.min()), float(x.max())
     if x0_initial_guess is None:
         x_fine = np.linspace(xmin, xmax, 2001)
-        x0_initial_guess = float(x_fine[int(np.argmin(spl1(x_fine)))])
+        if find_peak:
+            x0_initial_guess = float(x_fine[int(np.argmax(spl1(x_fine)))])
+        else:
+            x0_initial_guess = float(x_fine[int(np.argmin(spl1(x_fine)))])
 
     window_width = x0_window * (xmax - xmin)
     lo = max(xmin, x0_initial_guess - window_width / 2)
@@ -303,6 +313,7 @@ def bootstrap_x0(
     x0_window: float = 0.1,
     rng: Optional[np.random.Generator] = None,
     return_samples: bool = False,
+    find_peak: bool = False,
 ) -> tuple[float, float, float] | tuple[float, float, float, np.ndarray]:
     """Estimate uncertainty of x0 via residual bootstrap.
 
@@ -337,6 +348,12 @@ def bootstrap_x0(
         (coarser than main scan for speed).
     x0_window : float, optional
         Scan window fraction, same as in ``find_x0``. Default 0.1.
+    find_peak : bool, optional
+        If True, the eclipsing feature is a peak (maximum) of ``y`` rather
+        than a dip — as when working directly in magnitudes. The per-iteration
+        initial guess then uses the maximum of the bootstrap spline instead of
+        the minimum. Must match the ``find_peak`` value used in ``find_x0``.
+        Default False.
     rng : np.random.Generator or None, optional
         Random number generator. If None, a new PCG64 generator is created.
         Pass a seeded generator for reproducible results.
@@ -389,7 +406,10 @@ def bootstrap_x0(
 
         # Coarse scan for this bootstrap sample
         x_fine = np.linspace(xmin, xmax, 1001)
-        center = float(x_fine[int(np.argmin(spl_boot(x_fine)))])
+        if find_peak:
+            center = float(x_fine[int(np.argmax(spl_boot(x_fine)))])
+        else:
+            center = float(x_fine[int(np.argmin(spl_boot(x_fine)))])
         lo = max(xmin, center - window_width / 2)
         hi = min(xmax, center + window_width / 2)
 
@@ -426,6 +446,7 @@ def find_minimum(
     n_scan_boot: int = 80,
     rng: Optional[np.random.Generator] = None,
     return_samples: bool = False,
+    find_peak: bool = False,
 ) -> MinimumResult | tuple[MinimumResult, np.ndarray]:
     """Full pipeline: find the light-curve minimum and its uncertainty.
 
@@ -457,6 +478,12 @@ def find_minimum(
         precise confidence intervals.
     n_scan_boot : int, optional
         Grid resolution per bootstrap iteration. Default 80.
+    find_peak : bool, optional
+        If True, the eclipsing feature is a peak (maximum) of ``y`` rather
+        than a dip — as when working directly in magnitudes, where the eclipse
+        minimum is the largest magnitude value. This changes the initial-guess
+        step of the scan (and of each bootstrap iteration) from the minimum to
+        the maximum of the spline fit. Default False.
     rng : np.random.Generator or None, optional
         Random number generator for bootstrap. Pass a seeded generator for
         reproducibility. Default is a new PCG64 generator.
@@ -510,7 +537,8 @@ def find_minimum(
 
     # Main scan
     x0_opt, x0_grid, sigma2 = find_x0(
-        x, y, pts_per_knot, degree, w, n_scan, x0_window
+        x, y, pts_per_knot, degree, w, n_scan, x0_window,
+        find_peak=find_peak,
     )
 
     # Initial spline for bootstrap
@@ -519,7 +547,8 @@ def find_minimum(
     # Bootstrap
     x0_std, x0_lo, x0_hi, x0_boot = bootstrap_x0(
         x, y, x0_opt, spl1, pts_per_knot, degree, w,
-        n_bootstrap, n_scan_boot, x0_window, rng, return_samples=True
+        n_bootstrap, n_scan_boot, x0_window, rng, True,
+        find_peak=find_peak,
     )
 
     sigma_min = float(np.min(sigma2))

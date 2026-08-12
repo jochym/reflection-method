@@ -15,8 +15,20 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from matplotlib.dates import AutoDateLocator, DateFormatter
 
 from .core import LSQUnivariateSpline
+
+
+def _minutes_to_datetime64(t0: np.datetime64, minutes: np.ndarray) -> np.ndarray:
+    """Convert array of minutes-from-t0 to matplotlib-compatible datetime64."""
+    return t0 + (minutes * 60_000).astype("timedelta64[ms]")
+
+
+def _utc_label(t0: np.datetime64, x0_minutes: float) -> str:
+    """ISO-8601 UTC string for an ``x0`` expressed in minutes from ``t0``."""
+    ts = t0 + np.timedelta64(int(round(x0_minutes * 60)), "s")
+    return np.datetime_as_string(ts, unit="s", timezone="UTC")
 
 
 def plot_original_spline(
@@ -26,8 +38,10 @@ def plot_original_spline(
     x0_opt: float,
     x0_std: float,
     xlabel: str = "Time",
-    ylabel: str = "relative magnitude",
+    ylabel: str = "magnitude",
     x_unit: str = "",
+    invert_y: bool = False,
+    utc0: Optional[np.datetime64] = None,
     ax: Optional[Axes] = None,
 ) -> Axes:
     """Plot original data, initial spline fit, and the optimal ``x₀`` line.
@@ -47,10 +61,18 @@ def plot_original_spline(
     xlabel : str, optional
         Label for the x-axis (without unit). Default "Time".
     ylabel : str, optional
-        Label for the y-axis. Default "relative magnitude".
+        Label for the y-axis. Default "magnitude".
     x_unit : str, optional
         Unit string for the x-axis (e.g., "min", "JD", "phase"). Appended to
         the xlabel in brackets. Default "" (no unit).
+    invert_y : bool, optional
+        If True, invert the y-axis so that smaller values are on top — the
+        standard convention when plotting magnitudes (brighter stars up).
+        Default False.
+    utc0 : np.datetime64 or None, optional
+        Origin timestamp for the abscissae, which are then interpreted as
+        minutes from ``utc0`` and the x-axis is labelled with UTC clock times.
+        Default None (numeric x-axis, ``x_unit`` used for the label).
     ax : matplotlib.axes.Axes or None, optional
         Axes to plot on. If None, a new figure and axes are created.
 
@@ -72,22 +94,42 @@ def plot_original_spline(
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 4))
 
-    xs = np.linspace(x.min(), x.max(), 600)
+    if utc0 is not None:
+        x_plot = _minutes_to_datetime64(utc0, x)
+        xs = np.linspace(x.min(), x.max(), 600)
+        xs_plot = _minutes_to_datetime64(utc0, xs)
+        x0_opt_plot = _minutes_to_datetime64(utc0, np.array([x0_opt]))[0]
+    else:
+        x_plot = x
+        xs = np.linspace(x.min(), x.max(), 600)
+        xs_plot = xs
+        x0_opt_plot = x0_opt
 
-    ax.scatter(x, y, s=8, alpha=0.6, label="data", color="C0", edgecolors="none")
-    ax.plot(xs, spl1(xs), label="original spline", color="royalblue", linewidth=1.5)
+    ax.scatter(x_plot, y, s=8, alpha=0.6, label="data", color="C0", edgecolors="none")
+    ax.plot(xs_plot, spl1(xs), label="original spline", color="royalblue", linewidth=1.5)
 
     y_min, y_max = float(y.min()), float(y.max())
-    x0_label = f"x₀ = {x0_opt:.2f} ± {x0_std:.2f}"
-    if x_unit:
-        x0_label += f" {x_unit}"
-    ax.axvline(x0_opt, color="red", linewidth=1.5, label=x0_label)
+    if utc0 is not None:
+        x0_label = f"x₀ = {_utc_label(utc0, x0_opt)} ± {x0_std * 60:.0f} s"
+    else:
+        x0_label = f"x₀ = {x0_opt:.2f} ± {x0_std:.2f}"
+        if x_unit:
+            x0_label += f" {x_unit}"
+    ax.axvline(x0_opt_plot, color="red", linewidth=1.5, label=x0_label)
 
-    ax.set_xlabel(f"{xlabel} [{x_unit}]" if x_unit else xlabel)
+    if utc0 is not None:
+        ax.set_xlabel(f"{xlabel} [UTC]")
+        ax.xaxis.set_major_locator(AutoDateLocator())
+        ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
+    else:
+        ax.set_xlabel(f"{xlabel} [{x_unit}]" if x_unit else xlabel)
     ax.set_ylabel(ylabel)
     ax.set_title("Light curve and original spline with x₀")
     ax.legend(loc="lower left", framealpha=0.7)
     ax.grid(True, alpha=0.3)
+
+    if invert_y:
+        ax.invert_yaxis()
 
     return ax
 
@@ -171,8 +213,10 @@ def plot_all(
     spl_sigma: LSQUnivariateSpline,
     x0_boot: np.ndarray,
     xlabel: str = "Time",
-    ylabel: str = "relative magnitude",
+    ylabel: str = "magnitude",
     x_unit: str = "",
+    invert_y: bool = False,
+    utc0: Optional[np.datetime64] = None,
     **kwargs,
 ) -> Figure:
     """Create the standard 4-panel reflection-method diagnostic figure.
@@ -216,11 +260,23 @@ def plot_all(
     xlabel : str, optional
         Label for the main x-axis (e.g., "Time", "Phase"). Default "Time".
     ylabel : str, optional
-        Label for the y-axis (e.g., "relative magnitude", "Flux"). Default
-        "relative magnitude".
+        Label for the y-axis (e.g., "magnitude", "Flux"). Default
+        "magnitude".
     x_unit : str, optional
         Unit for the x-axis (e.g., "min", "JD", "HJD", "phase"). Appended
         to axis labels and ``x₀`` labels. Default "".
+    invert_y : bool, optional
+        If True, invert the y-axis of the main panel so that smaller values
+        are on top — the standard convention when plotting magnitudes
+        (brighter stars up). Default False.
+    utc0 : np.datetime64 or None, optional
+        Origin timestamp for the abscissae, which are then interpreted as
+        minutes from ``utc0``. The main panel is then labelled with UTC
+        clock times instead of the raw numeric axis, and the ``x₀`` label on
+        the main panel shows the UTC time of the minimum. The right-hand
+        panels (σ₂ scan and histogram) always use relative minutes from x₀
+        to show precision. Default None (numeric x-axis, ``x_unit`` used
+        for the labels).
     **kwargs : dict
         Additional keyword arguments (currently unused, for forward
         compatibility).
@@ -276,32 +332,59 @@ def plot_all(
     xs = np.linspace(x.min(), x.max(), 600)
     xs2 = np.linspace(min(x.min(), xr.min()), max(x.max(), xr.max()), 600)
 
-    ax_main.scatter(x, y, s=8, alpha=0.6, label="original data", color="C0", edgecolors="none")
-    ax_main.scatter(xr, y, s=8, alpha=0.5, label="reflected points", color="orange", edgecolors="none")
-    ax_main.plot(xs, spl1(xs), label="original spline", color="royalblue", linewidth=1.5)
-    ax_main.plot(xs2, spl2(xs2), label="refitted spline (data + reflection)", color="darkgreen", linestyle="--", linewidth=1.5)
+    if utc0 is not None:
+        x_plot = _minutes_to_datetime64(utc0, x)
+        xr_plot = _minutes_to_datetime64(utc0, xr)
+        xs_plot = _minutes_to_datetime64(utc0, xs)
+        xs2_plot = _minutes_to_datetime64(utc0, xs2)
+        x0_opt_plot = _minutes_to_datetime64(utc0, np.array([x0_opt]))[0]
+    else:
+        x_plot = x
+        xr_plot = xr
+        xs_plot = xs
+        xs2_plot = xs2
+        x0_opt_plot = x0_opt
+
+    ax_main.scatter(x_plot, y, s=8, alpha=0.6, label="original data", color="C0", edgecolors="none")
+    ax_main.scatter(xr_plot, y, s=8, alpha=0.5, label="reflected points", color="orange", edgecolors="none")
+    ax_main.plot(xs_plot, spl1(xs), label="original spline", color="royalblue", linewidth=1.5)
+    ax_main.plot(xs2_plot, spl2(xs2), label="refitted spline (data + reflection)", color="darkgreen", linestyle="--", linewidth=1.5)
 
     y_min, y_max = float(y.min()), float(y.max())
-    x0_label = f"x₀ = {x0_opt:.2f} ± {x0_std:.2f}"
-    if x_unit:
-        x0_label += f" {x_unit}"
-    ax_main.axvline(x0_opt, color="red", linewidth=1.5, label=x0_label)
+    if utc0 is not None:
+        x0_label = f"x₀ = {_utc_label(utc0, x0_opt)} ± {x0_std * 60:.0f} s"
+    else:
+        x0_label = f"x₀ = {x0_opt:.2f} ± {x0_std:.2f}"
+        if x_unit:
+            x0_label += f" {x_unit}"
+    ax_main.axvline(x0_opt_plot, color="red", linewidth=1.5, label=x0_label)
 
-    ax_main.set_xlabel(f"{xlabel} [{x_unit}]" if x_unit else xlabel)
+    if utc0 is not None:
+        ax_main.set_xlabel(f"{xlabel} [UTC]")
+        ax_main.xaxis.set_major_locator(AutoDateLocator())
+        ax_main.xaxis.set_major_formatter(DateFormatter("%H:%M"))
+    else:
+        ax_main.set_xlabel(f"{xlabel} [{x_unit}]" if x_unit else xlabel)
     ax_main.set_ylabel(ylabel)
-    ax_main.set_title(f"Reflected light curve; x₀ = {x0_opt:.2f} ± {x0_std:.2f} {x_unit}".strip())
+    ax_main.set_title(f"Reflected light curve; {x0_label}")
     ax_main.legend(loc="upper right", fontsize=8, framealpha=0.7)
     ax_main.grid(True, alpha=0.3)
 
+    if invert_y:
+        ax_main.invert_yaxis()
+
     # --- Panel 2: σ₂ ---
     # Dense sampling for smooth spline curve
-    xs_sig = np.linspace(x0_grid[0], x0_grid[-1], 500)
-    ax_sigma.plot(x0_grid, sigma2, 'o', label="σ₂(x₀)", color="darkgreen", markersize=3, alpha=0.7, linewidth=0)
-    ax_sigma.plot(xs_sig, spl_sigma(xs_sig), label="σ₂ spline", color="darkgreen", linestyle="-", linewidth=1.5)
-    ax_sigma.axvline(x0_opt, color="red", linewidth=1.5)
+    # Plot relative to x0_opt (in minutes) to show precision, not absolute time
+    x0_rel = x0_grid - x0_opt
+    xs_sig_rel = np.linspace(x0_rel[0], x0_rel[-1], 500)
+    ax_sigma.plot(x0_rel, sigma2, 'o', label="σ₂(x₀)", color="darkgreen", markersize=3, alpha=0.7, linewidth=0)
+    ax_sigma.plot(xs_sig_rel, spl_sigma(xs_sig_rel + x0_opt), label="σ₂ spline", color="darkgreen", linestyle="-", linewidth=1.5)
+    ax_sigma.axvline(0, color="red", linewidth=1.5)
 
     # Set x-limits to ±3σ around x0_opt for consistency with histogram
-    ax_sigma.set_xlim(x0_xlim)
+    x0_rel_xlim = (-3 * x0_std, 3 * x0_std)
+    ax_sigma.set_xlim(x0_rel_xlim)
     # Set y-limits to show the minimum region nicely
     sigma_min = float(np.min(sigma2))
     sigma_max_in_range = float(np.max(sigma2[(x0_grid >= x0_xlim[0]) & (x0_grid <= x0_xlim[1])]))
@@ -315,15 +398,17 @@ def plot_all(
     ax_sigma.tick_params(labelbottom=False)
 
     # --- Panel 3: Histogram ---
-    hist_counts, hist_bins, _ = ax_hist.hist(x0_boot, bins=15, color=(120/255, 120/255, 170/255, 0.6), edgecolor="none", alpha=0.7, label="bootstrap distribution")
+    # Plot relative to x0_opt (in minutes) to show precision
+    x0_boot_rel = x0_boot - x0_opt
+    hist_counts, hist_bins, _ = ax_hist.hist(x0_boot_rel, bins=15, color=(120/255, 120/255, 170/255, 0.6), edgecolor="none", alpha=0.7, label="bootstrap distribution")
     hist_max = float(hist_counts.max())
-    ax_hist.axvline(x0_opt, color="red", linewidth=1.5)
+    ax_hist.axvline(0, color="red", linewidth=1.5)
 
-    # Same x-limits as σ₂ panel
-    ax_hist.set_xlim(x0_xlim)
+    # Same x-limits as σ₂ panel (±3σ)
+    x0_rel_xlim = (-3 * x0_std, 3 * x0_std)
+    ax_hist.set_xlim(x0_rel_xlim)
 
-    x0_label = f"x₀ [{x_unit}]" if x_unit else "x₀"
-    ax_hist.set_xlabel(x0_label)
+    ax_hist.set_xlabel("Δx₀ [min]")
     ax_hist.set_ylabel("count")
     ax_hist.set_title("Bootstrap distribution of x₀")
     ax_hist.legend(fontsize=8, framealpha=0.7)

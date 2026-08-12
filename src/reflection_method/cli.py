@@ -61,7 +61,7 @@ def parse_datetime_column(values: list[str]) -> tuple[np.ndarray, Optional[np.da
 
 
 def parse_jd_column(values: list[str]) -> np.ndarray:
-    """Parse a Julian Date (or HJD/MJD) column to floats.
+    """Parse a Julian Date column to floats.
 
     Parameters
     ----------
@@ -76,41 +76,24 @@ def parse_jd_column(values: list[str]) -> np.ndarray:
     return np.array([float(v) for v in values], dtype=float)
 
 
-def parse_phase_column(values: list[str]) -> np.ndarray:
-    """Parse a phase column (values in 0-1) to floats.
+def jd_to_datetime(jd: float) -> np.datetime64:
+    """Convert a Julian Date to a UTC ``datetime64``.
+
+    Reference epoch: JD 2451545.0 corresponds to 2000-01-01T12:00:00 UTC.
 
     Parameters
     ----------
-    values : list[str]
-        String representations of phases.
+    jd : float
+        Julian Date (geocentric, observation time).
 
     Returns
     -------
-    np.ndarray
-        Float array of phases.
+    np.datetime64
+        The corresponding UTC timestamp (second precision).
     """
-    return np.array([float(v) for v in values], dtype=float)
-
-
-def mag_to_flux(mag: np.ndarray) -> np.ndarray:
-    """Convert magnitudes to median-normalized relative flux.
-
-    Applies the standard photometric relation ``F = 10 ** (-0.4 * (mag - m0))``
-    where ``m0`` is the median magnitude. The result is dimensionless and
-    centered near unity.
-
-    Parameters
-    ----------
-    mag : np.ndarray
-        Magnitude values.
-
-    Returns
-    -------
-    np.ndarray
-        Relative flux values (median-normalized).
-    """
-    median_mag = float(np.median(mag))
-    return 10.0 ** (-0.4 * (mag - median_mag))
+    return np.datetime64("2000-01-01T12:00:00") + np.timedelta64(
+        int(round((jd - 2451545.0) * 86400)), "s"
+    )
 
 
 def read_csv_file(
@@ -119,13 +102,17 @@ def read_csv_file(
     y_col: str,
     w_col: Optional[str],
     time_format: str,
-    invert_mag: bool,
 ) -> tuple[np.ndarray, np.ndarray, Optional[np.ndarray], Optional[np.datetime64]]:
     """Read a CSV file and extract ``x``, ``y`` and optional weights.
 
     Handles AAVSO-style extended format where the column header is in a
     comment line like ``#NAME,DATE-OBS,MAG,MAG_ERR,...``. Falls back to
     treating the first non-comment line as the header.
+
+    The ordinate column (typically ``MAG``) is used **as-is**, on the
+    logarithmic magnitude scale. For an eclipsing binary the eclipse minimum
+    is therefore a *maximum* of ``y`` — pass ``find_peak=True`` to the core
+    algorithm.
 
     Parameters
     ----------
@@ -138,10 +125,10 @@ def read_csv_file(
     w_col : str or None
         Name of the column holding measurement uncertainties, or None.
     time_format : str
-        One of ``"jd"``, ``"hjd"``, ``"mjd"``, ``"iso"``, ``"phase"``,
-        ``"minutes"``.
-    invert_mag : bool
-        If True, convert magnitudes to relative flux (``mag_to_flux``).
+        One of ``"iso"`` (default) or ``"jd"``. The CLI works on observation
+        times; the only supported conversions are to UTC (default) or to
+        Julian Date (on request). Heliocentric/geocentric corrections (HJD,
+        BJD) are out of scope.
 
     Returns
     -------
@@ -149,7 +136,7 @@ def read_csv_file(
         ``(x, y, w, t0_utc)`` where:
         - ``x`` : abscissae in the units implied by ``time_format``
           (for ``"iso"`` these are minutes from the first timestamp)
-        - ``y`` : ordinates (flux or magnitude)
+        - ``y`` : ordinates (magnitudes, as reported)
         - ``w`` : weights ``1 / sigma``, or None if no ``w_col``
         - ``t0_utc`` : earliest timestamp as ``datetime64[ms]``, or None
           unless ``time_format == "iso"``
@@ -208,24 +195,16 @@ def read_csv_file(
     y_raw = np.array([float(row[y_col]) for row in rows])
     w_raw = np.array([float(row[w_col]) for row in rows]) if w_col else None
 
-    # ... rest of function unchanged
     t0_utc = None
     if time_format == "iso":
         x, t0_utc = parse_datetime_column(x_raw)
-    elif time_format in ("jd", "hjd", "mjd"):
+    elif time_format == "jd":
         x = parse_jd_column(x_raw)
-    elif time_format == "phase":
-        x = parse_phase_column(x_raw)
-    elif time_format == "minutes":
-        x = np.array([float(v) for v in x_raw], dtype=float)
     else:
         raise ValueError(f"Unknown time_format: {time_format}")
 
-    # Invert magnitudes to flux if requested
-    if invert_mag:
-        y = mag_to_flux(y_raw)
-    else:
-        y = y_raw
+    # Ordinates are used as-is (magnitude scale, per AAVSO convention)
+    y = y_raw
 
     # Weights: 1/sigma if provided, else None
     if w_raw is not None:
@@ -236,27 +215,48 @@ def read_csv_file(
     return x, y, w, t0_utc
 
 
-def result_to_dict(result: MinimumResult, t0_utc: Optional[np.datetime64] = None) -> dict:
+def _utc_iso(ts: np.datetime64) -> str:
+    """Format a ``datetime64`` as ISO-8601 UTC (trailing ``Z``)."""
+    utc_str = np.datetime_as_string(ts, unit="s", timezone="UTC")
+    if utc_str.endswith("Z"):
+        return utc_str
+    if "T" in utc_str:
+        return utc_str + "Z"
+    return utc_str.replace(" ", "T") + "Z"
+
+
+def result_to_dict(
+    result: MinimumResult,
+    t0_utc: Optional[np.datetime64] = None,
+    time_format: str = "iso",
+) -> dict:
     """Convert a ``MinimumResult`` into a JSON-serializable dictionary.
 
-    When ``t0_utc`` is given, ``x0`` (minutes from origin) is converted to
-    an ISO-8601 UTC timestamp and the uncertainty is expressed in seconds.
+    The minimum is always also reported as a UTC time, converted at the very
+    end of the pipeline:
+
+    - ``time_format="iso"``: ``x0`` is in minutes from ``t0_utc`` (the
+      earliest observation) and is converted to ``utc_time``.
+    - ``time_format="jd"``: ``x0`` is in Julian Date units; the same JD is
+      converted to ``utc_time`` via :func:`jd_to_datetime`.
 
     Parameters
     ----------
     result : MinimumResult
         Result of ``find_minimum``.
     t0_utc : np.datetime64 or None, optional
-        Time origin (earliest timestamp of the light curve). If None, only
-        the raw x0 values are included in the output.
+        Time origin (earliest timestamp of the light curve) for
+        ``time_format="iso"``.
+    time_format : str
+        ``"iso"`` (default) or ``"jd"``.
 
     Returns
     -------
     dict
         Dictionary with keys ``x0``, ``x0_std``, ``x0_lo``, ``x0_hi``,
-        ``sigma_min``, ``n_points``, ``n_bootstrap`` and, when ``t0_utc`` is
-        given, ``utc_time`` (ISO-8601 with trailing ``Z``) and
-        ``utc_uncertainty_s``.
+        ``sigma_min``, ``n_points``, ``n_bootstrap`` and, when the minimum
+        can be expressed as a UTC time, ``utc_time`` (ISO-8601 with trailing
+        ``Z``) and ``utc_uncertainty_s``.
     """
     out = {
         "x0": float(result.x0),
@@ -267,47 +267,41 @@ def result_to_dict(result: MinimumResult, t0_utc: Optional[np.datetime64] = None
         "n_points": int(result.n_points),
         "n_bootstrap": int(result.n_bootstrap),
     }
-    if t0_utc is not None:
-        # Convert x0 to UTC time
+    if time_format == "jd":
+        # x0 is already a Julian Date; convert to UTC at the very end
+        ts = jd_to_datetime(float(result.x0))
+        out["utc_time"] = _utc_iso(ts)
+        out["utc_uncertainty_s"] = float(result.x0_std * 86400)
+    elif t0_utc is not None:
+        # Convert x0 (minutes from origin) to UTC time
         ts = t0_utc + np.timedelta64(int(result.x0 * 60), "s")
-        # Proper ISO 8601 UTC format: 2026-08-08T22:14:04Z
-        utc_str = np.datetime_as_string(ts, unit="s", timezone="UTC")
-        if utc_str.endswith("Z"):
-            pass  # already has Z
-        elif "T" in utc_str:
-            utc_str += "Z"
-        else:
-            utc_str = utc_str.replace(" ", "T") + "Z"
-        utc_uncertainty_s = float(result.x0_std * 60)
-        out["utc_time"] = utc_str
-        out["utc_uncertainty_s"] = utc_uncertainty_s
+        out["utc_time"] = _utc_iso(ts)
+        out["utc_uncertainty_s"] = float(result.x0_std * 60)
     return out
 
 
 @click.command()
 @click.argument("input_file", type=click.Path(exists=True, path_type=Path))
-@click.option("--x-col", default="DATE-OBS", help="X column name (time)")
-@click.option("--y-col", default="MAG", help="Y column name (magnitude/flux)")
-@click.option("--w-col", default=None, help="Weight/error column name (optional)")
-@click.option("--time-format", type=click.Choice(["jd", "hjd", "mjd", "iso", "minutes"]), default="iso", help="Time format of X column")
-@click.option("--invert-mag/--no-invert-mag", default=True, help="Convert MAG to relative flux")
-@click.option("--pts-per-knot", default=10, type=int, help="Points per spline knot")
-@click.option("--degree", default=3, type=int, help="Spline degree (1-5)")
-@click.option("--n-scan", default=200, type=int, help="Scan resolution for x0 search")
-@click.option("--x0-window", default=0.1, type=float, help="Scan window as fraction of x-range")
-@click.option("--n-bootstrap", default=60, type=int, help="Bootstrap iterations")
-@click.option("--n-scan-boot", default=80, type=int, help="Scan resolution per bootstrap iteration")
-@click.option("--seed", default=None, type=int, help="Random seed for reproducibility")
-@click.option("--output", "-o", type=click.Path(path_type=Path), default=None, help="Output JSON file (default: stdout)")
-@click.option("--plot", type=click.Path(path_type=Path), default=None, help="Save plot to file (requires [plot] extra)")
-@click.option("--plot-format", type=click.Choice(["png", "pdf", "svg"]), default="png", help="Plot format")
+@click.option("-x", "--x-col", default="DATE-OBS", help="X column name (time)")
+@click.option("-y", "--y-col", default="MAG", help="Y column name (magnitude)")
+@click.option("-w", "--w-col", default=None, help="Weight/error column name (optional)")
+@click.option("-t", "--time-format", type=click.Choice(["iso", "jd"]), default="iso", help="Time axis: iso (UTC, default) or jd (Julian Date, on request)")
+@click.option("-k", "--pts-per-knot", default=10, type=int, help="Points per spline knot")
+@click.option("-d", "--degree", default=3, type=int, help="Spline degree (1-5)")
+@click.option("-n", "--n-scan", default=200, type=int, help="Scan resolution for x0 search")
+@click.option("-W", "--x0-window", default=0.1, type=float, help="Scan window as fraction of x-range")
+@click.option("-b", "--n-bootstrap", default=60, type=int, help="Bootstrap iterations")
+@click.option("-B", "--n-scan-boot", default=80, type=int, help="Scan resolution per bootstrap iteration")
+@click.option("-s", "--seed", default=None, type=int, help="Random seed for reproducibility")
+@click.option("-o", "--output", type=click.Path(path_type=Path), default=None, help="Output JSON file (default: stdout)")
+@click.option("-p", "--plot", type=click.Path(path_type=Path), default=None, help="Save plot to file (requires [plot] extra)")
+@click.option("-F", "--plot-format", type=click.Choice(["png", "pdf", "svg"]), default="png", help="Plot format")
 def find(
     input_file: Path,
     x_col: str,
     y_col: str,
     w_col: Optional[str],
     time_format: str,
-    invert_mag: bool,
     pts_per_knot: int,
     degree: int,
     n_scan: int,
@@ -321,52 +315,23 @@ def find(
 ):
     """Find an eclipse minimum in a light curve using the reflection method.
 
-    Reads a CSV file (AAVSO-style extended format with ``#`` comment header
-    is supported), converts time and magnitude columns, runs the reflection
-    method via :func:`reflection_method.find_minimum`, and prints a JSON
-    report with the minimum location ``x0`` and its uncertainties. An
-    optional diagnostic plot can be written with ``--plot`` (requires the
-    ``[plot]`` extra).
+    Reads a CSV file (AAVSO-style extended format with a # comment header is
+    supported) and runs the reflection method via reflection_method.
+    find_minimum with find_peak=True (an eclipse is a maximum of the
+    magnitude light curve). Prints a JSON report with the minimum location
+    and its uncertainties. An optional diagnostic plot can be written with
+    --plot (requires the [plot] extra).
 
-    Parameters
-    ----------
-    input_file : Path
-        Path to the input CSV file.
-    x_col : str
-        Name of the time column. Default ``DATE-OBS``.
-    y_col : str
-        Name of the magnitude/flux column. Default ``MAG``.
-    w_col : str or None
-        Name of the uncertainty column, or None for equal weights.
-    time_format : str
-        One of ``jd``, ``hjd``, ``mjd``, ``iso``, ``minutes``.
-    invert_mag : bool
-        Convert magnitudes to relative flux. Default True.
-    pts_per_knot : int
-        Points per spline knot. Default 10.
-    degree : int
-        Spline degree (1-5). Default 3.
-    n_scan : int
-        Scan resolution for the main x0 search. Default 200.
-    x0_window : float
-        Scan window as a fraction of the x range. Default 0.1.
-    n_bootstrap : int
-        Bootstrap iterations for uncertainty estimation. Default 60.
-    n_scan_boot : int
-        Scan resolution per bootstrap iteration. Default 80.
-    seed : int or None
-        Random seed for reproducibility.
-    output : Path or None
-        Write JSON to this file instead of stdout.
-    plot : Path or None
-        Save a diagnostic plot to this file.
-    plot_format : str
-        Plot format: ``png``, ``pdf`` or ``svg``.
+    Magnitudes are used directly on the logarithmic scale. We operate on
+    observation times as given. By default (--time-format iso) the minimum
+    is reported as a UTC time; conversions (e.g. to JD) are done only at the
+    very end, on request via --time-format jd. Heliocentric and
+    barycentric corrections (HJD, BJD) are out of scope.
     """
     # Read data
     try:
         x, y, w, t0_utc = read_csv_file(
-            str(input_file), x_col, y_col, w_col, time_format, invert_mag
+            str(input_file), x_col, y_col, w_col, time_format
         )
     except Exception as e:
         click.echo(f"Error reading data: {e}", err=True)
@@ -390,6 +355,7 @@ def find(
             x0_window=x0_window,
             n_bootstrap=n_bootstrap,
             n_scan_boot=n_scan_boot,
+            find_peak=True,
             rng=rng,
             return_samples=True,
         )
@@ -398,7 +364,7 @@ def find(
         sys.exit(1)
 
     # Prepare output
-    out_dict = result_to_dict(result, t0_utc)
+    out_dict = result_to_dict(result, t0_utc, time_format)
     out_dict["input_file"] = str(input_file)
     out_dict["time_format"] = time_format
     out_dict["parameters"] = {
@@ -429,7 +395,7 @@ def find(
             from scipy.interpolate import UnivariateSpline
 
             # Reconstruct intermediate data
-            x0_opt, x0_grid, sigma2 = find_x0(x, y, pts_per_knot, degree, w, n_scan, x0_window)
+            x0_opt, x0_grid, sigma2 = find_x0(x, y, pts_per_knot, degree, w, n_scan, x0_window, find_peak=True)
             spl1 = fit_spline(x, y, pts_per_knot, degree, w)
             spl_sigma = UnivariateSpline(x0_grid, sigma2, k=3, s=0)
             xr = 2 * x0_opt - x
@@ -439,29 +405,20 @@ def find(
             # Determine axis labels and units
             if time_format == "iso":
                 xlabel = "Time"
-                ylabel = "relative magnitude"
+                ylabel = "magnitude"
                 x_unit = "min"
-            elif time_format in ("jd", "hjd", "mjd"):
-                xlabel = "Time"
-                ylabel = "relative magnitude"
-                x_unit = time_format.upper()
-            elif time_format == "phase":
-                xlabel = "Phase"
-                ylabel = "relative magnitude"
-                x_unit = ""
-            elif time_format == "minutes":
-                xlabel = "Time"
-                ylabel = "relative magnitude"
-                x_unit = "min"
+                utc0 = t0_utc
             else:
                 xlabel = "Time"
-                ylabel = "relative magnitude"
-                x_unit = ""
+                ylabel = "magnitude"
+                x_unit = "JD"
+                utc0 = None
 
             fig = plot_all(
                 x, y, spl1, xr, spl2, x0_opt, result.x0_std,
                 x0_grid, sigma2, spl_sigma, x0_boot,
-                xlabel=xlabel, ylabel=ylabel, x_unit=x_unit
+                xlabel=xlabel, ylabel=ylabel, x_unit=x_unit,
+                invert_y=True, utc0=utc0,
             )
             fig.savefig(plot, format=plot_format, dpi=150, bbox_inches="tight")
             plt.close(fig)

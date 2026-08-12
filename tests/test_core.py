@@ -127,6 +127,17 @@ class TestFindX0:
         x0_opt, _, _ = find_x0(x, y, pts_per_knot=10, degree=3, n_scan=300)
         assert abs(x0_opt - 0.3) < 0.02
 
+    def test_find_x0_peak_on_magnitudes(self):
+        # On a magnitude scale the eclipse is a *maximum* of y: without
+        # find_peak the initial guess lands on the brightest point and the
+        # scan window misses the eclipse entirely.
+        phase, flux = make_synthetic_eclipsing(500, seed=20, min_phase=0.5, noise=0.005)
+        mag = -2.5 * np.log10(np.maximum(flux, 1e-12))
+        x0_wrong, _, _ = find_x0(phase, mag, pts_per_knot=10, degree=3, n_scan=300)
+        x0_opt, _, _ = find_x0(phase, mag, pts_per_knot=10, degree=3, n_scan=300, find_peak=True)
+        assert abs(x0_wrong - 0.5) > 0.05
+        assert abs(x0_opt - 0.5) < 0.02
+
 
 class TestBootstrapX0:
     def test_bootstrap_returns_uncertainties(self):
@@ -183,6 +194,20 @@ class TestFindMinimum:
         assert result.sigma_min > 0
         assert result.n_points == 500
         assert result.n_bootstrap == 30
+
+    def test_full_pipeline_on_magnitudes(self):
+        # Magnitude light curve (eclipse = peak of y) with find_peak=True
+        x, y = make_synthetic_eclipsing(500, seed=21, min_phase=0.5, noise=0.005)
+        mag = -2.5 * np.log10(np.maximum(y, 1e-12))
+        result = find_minimum(
+            x, mag,
+            pts_per_knot=10, degree=3,
+            n_scan=200, n_bootstrap=30, n_scan_boot=60,
+            find_peak=True,
+            rng=np.random.default_rng(99),
+        )
+        assert isinstance(result, MinimumResult)
+        assert abs(result.x0 - 0.5) < 0.02
 
     def test_minimum_result_immutable(self):
         x, y = make_synthetic_eclipsing(100, seed=15)

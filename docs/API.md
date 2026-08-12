@@ -88,21 +88,24 @@ sorted by abscissa.
 - **Returns**: `(x_all, y_all, w_all)` tuple of sorted arrays; `w_all` is
   `None` if `w` is `None`.
 
-### `find_x0(x, y, pts_per_knot=10, degree=3, w=None, n_scan=200, x0_window=0.1, x0_initial_guess=None)`
+### `find_x0(x, y, pts_per_knot=10, degree=3, w=None, n_scan=200, x0_window=0.1, x0_initial_guess=None, find_peak=False)`
 
 Scan trial reflection points to locate the minimum of σ₂(x₀). The σ₂ curve
 is evaluated on a grid centered on an initial guess (by default the minimum
-of a coarse spline fit to the data) and spanning
-`x0_window * (xmax - xmin)`. The minimum is refined with a cubic spline
-interpolation of σ₂(x₀) minimized by bounded Brent's method.
+— or the maximum when `find_peak=True` — of a coarse spline fit to the data)
+and spanning `x0_window * (xmax - xmin)`. The minimum is refined with a
+cubic spline interpolation of σ₂(x₀) minimized by bounded Brent's method.
 
 - **Parameters**: `n_scan` — grid resolution (default 200);
   `x0_window` — scan window as a fraction of the x-range (default 0.1);
-  `x0_initial_guess` — optional explicit initial guess (default None).
+  `x0_initial_guess` — optional explicit initial guess (default None);
+  `find_peak` — if True, the feature is a *maximum* of `y` (e.g. an eclipse
+  on a magnitude scale) and the initial guess uses the spline maximum
+  instead of the minimum (default False).
 - **Returns**: `(x0_opt, x0_grid, sigma2_grid)` — refined minimum, scan
   grid, and σ₂ values at each grid point.
 
-### `bootstrap_x0(x, y, x0_opt, spl1, pts_per_knot, degree, w, n_bootstrap=60, n_scan_boot=80, x0_window=0.1, rng=None, return_samples=False)`
+### `bootstrap_x0(x, y, x0_opt, spl1, pts_per_knot, degree, w, n_bootstrap=60, n_scan_boot=80, x0_window=0.1, rng=None, return_samples=False, find_peak=False)`
 
 Estimate the uncertainty of `x0` via **residual bootstrap**: residuals from
 the initial spline fit are resampled with replacement and added to the fit;
@@ -113,19 +116,25 @@ the full scan is repeated per iteration at reduced resolution.
   `n_scan_boot` — per-iteration scan resolution (default 80);
   `rng` — `numpy.random.Generator` (default: new PCG64 generator; pass a
   seeded generator for reproducibility); `return_samples` — when True,
-  append the array of individual bootstrap estimates to the return value.
+  append the array of individual bootstrap estimates to the return value;
+  `find_peak` — if True, the per-iteration initial guess uses the spline
+  maximum (eclipses on a magnitude scale); must match the value used in
+  `find_x0` (default False).
 - **Returns**: `(x0_std, x0_lo, x0_hi)` — bootstrap standard error (ddof=1)
   and the 16th/84th percentiles. With `return_samples=True` a fourth
   element `x0_boot` (the raw estimates, length `n_bootstrap`) is appended.
 
-### `find_minimum(x, y, pts_per_knot=10, degree=3, w=None, n_scan=200, x0_window=0.1, n_bootstrap=60, n_scan_boot=80, rng=None, return_samples=False)`
+### `find_minimum(x, y, pts_per_knot=10, degree=3, w=None, n_scan=200, x0_window=0.1, n_bootstrap=60, n_scan_boot=80, rng=None, return_samples=False, find_peak=False)`
 
 Full pipeline: runs `find_x0`, then `bootstrap_x0`, and packages the result
 in a `MinimumResult`.
 
 - **Parameters**: as for the components above (see `find_x0` and
   `bootstrap_x0`); `return_samples` — when True, also return the raw
-  bootstrap estimates.
+  bootstrap estimates; `find_peak` — if True, the eclipsing feature is a
+  *maximum* of `y` (the eclipse is the largest magnitude value), so the
+  initial-guess step looks for a peak instead of a dip. Use this when
+  working directly on magnitudes (default False).
 - **Returns**: `MinimumResult`. With `return_samples=True`, a tuple
   `(result, x0_boot)` is returned instead, where `x0_boot` is the array of
   `n_bootstrap` individual estimates (useful for plotting the bootstrap
@@ -152,7 +161,7 @@ print([result.x0_lo, result.x0_hi])           # 68% confidence interval
 All plotting functions accept an optional `ax` and return the axes (or the
 figure for `plot_all`). They require matplotlib.
 
-### `plot_original_spline(x, y, spl1, x0_opt, x0_std, xlabel="Time", ylabel="relative magnitude", x_unit="", ax=None)`
+### `plot_original_spline(x, y, spl1, x0_opt, x0_std, xlabel="Time", ylabel="magnitude", x_unit="", invert_y=False, ax=None)`
 
 Plots the original data, the initial spline fit, and a vertical line at
 `x0_opt ± x0_std`.
@@ -162,7 +171,7 @@ Plots the original data, the initial spline fit, and a vertical line at
 Plots σ₁ and σ₂ over the scan grid plus the interpolating spline for σ₂,
 with vertical lines at the grid minimum and the refined `x0_opt`.
 
-### `plot_all(x, y, spl1, xr, spl2, x0_opt, x0_std, x0_grid, sigma2, spl_sigma, x0_boot, xlabel="Time", ylabel="relative magnitude", x_unit="", **kwargs)`
+### `plot_all(x, y, spl1, xr, spl2, x0_opt, x0_std, x0_grid, sigma2, spl_sigma, x0_boot, xlabel="Time", ylabel="magnitude", x_unit="", invert_y=False, **kwargs)`
 
 Standard 2×2 diagnostic figure:
 
@@ -173,12 +182,15 @@ Standard 2×2 diagnostic figure:
 3. **Bootstrap histogram** — distribution of `x0` estimates, sharing the
    same x-limits as the σ₂ panel.
 
+`invert_y=True` draws the magnitude axis with brighter stars on top (the
+standard convention); the σ₂ and histogram panels are unaffected.
+
 Returns a `matplotlib.figure.Figure`.
 
 ```python
 fig = plot_all(x, y, spl1, xr, spl2, x0_opt, x0_std,
                x0_grid, sigma2, spl_sigma, x0_boot,
-               xlabel="Time", ylabel="relative magnitude", x_unit="min")
+               xlabel="Time", ylabel="magnitude", x_unit="min", invert_y=True)
 fig.savefig("output.png", dpi=150, bbox_inches="tight")
 ```
 
@@ -186,30 +198,28 @@ fig.savefig("output.png", dpi=150, bbox_inches="tight")
 
 ```bash
 reflection-method find DATA.csv \
-    --x-col DATE-OBS --y-col MAG --w-col MAG_ERR --invert-mag \
-    --time-format iso \
-    --pts-per-knot 10 --degree 3 --n-scan 200 --n-bootstrap 60 --seed 42 \
-    --output result.json --plot diagnostic.png
+    -x DATE-OBS -y MAG -w MAG_ERR \
+    -t iso -k 10 -d 3 -n 200 -b 60 -s 42 \
+    -o result.json -p diagnostic.png
 ```
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `INPUT_FILE` | — | CSV file (AAVSO extended format supported) |
-| `--x-col` | `DATE-OBS` | Time column name |
-| `--y-col` | `MAG` | Magnitude/flux column name |
-| `--w-col` | (none) | Uncertainty column name |
-| `--time-format` | `iso` | `iso`, `jd`, `hjd`, `mjd`, `minutes` |
-| `--invert-mag/--no-invert-mag` | on | Convert MAG to relative flux |
-| `--pts-per-knot` | `10` | Points per spline knot |
-| `--degree` | `3` | Spline degree (1–5) |
-| `--n-scan` | `200` | Scan resolution for x₀ |
-| `--x0-window` | `0.1` | Scan window as fraction of x-range |
-| `--n-bootstrap` | `60` | Bootstrap iterations |
-| `--n-scan-boot` | `80` | Bootstrap scan resolution |
-| `--seed` | (none) | Random seed for reproducibility |
-| `--output`, `-o` | stdout | Output JSON file |
-| `--plot` | (none) | Save 4-panel plot to file |
-| `--plot-format` | `png` | `png`, `pdf`, `svg` |
+| Option | Short | Default | Description |
+|--------|-------|---------|-------------|
+| `INPUT_FILE` | — | — | CSV file (AAVSO extended format supported) |
+| `--x-col` | `-x` | `DATE-OBS` | Time column name |
+| `--y-col` | `-y` | `MAG` | Magnitude column name |
+| `--w-col` | `-w` | (none) | Uncertainty column name |
+| `--time-format` | `-t` | `iso` | `iso`, `jd`, `hjd`, `mjd`, `minutes` |
+| `--pts-per-knot` | `-k` | `10` | Points per spline knot |
+| `--degree` | `-d` | `3` | Spline degree (1–5) |
+| `--n-scan` | `-n` | `200` | Scan resolution for x₀ |
+| `--x0-window` | `-W` | `0.1` | Scan window as fraction of x-range |
+| `--n-bootstrap` | `-b` | `60` | Bootstrap iterations |
+| `--n-scan-boot` | `-B` | `80` | Bootstrap scan resolution |
+| `--seed` | `-s` | (none) | Random seed for reproducibility |
+| `--output`, `-o` | — | stdout | Output JSON file |
+| `--plot` | `-p` | (none) | Save 4-panel plot to file |
+| `--plot-format` | `-F` | `png` | `png`, `pdf`, `svg` |
 
 For `--time-format iso`, the earliest timestamp is used as the origin, `x0`
 is reported in minutes from that origin, and the JSON output additionally

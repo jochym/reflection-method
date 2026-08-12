@@ -38,5 +38,5 @@ print(f"68% CI: [{result.x0_lo:.4f}, {result.x0_hi:.4f}]")
 print(f"Sigma min: {result.sigma_min:.4f}")
 print(f"N points: {result.n_points}, Bootstrap iterations: {result.n_bootstrap}")
 
-# With real AAVSO data, use the CLI:
-# reflection-method find data.csv --x-col DATE-OBS --y-col MAG --w-col MAG_ERR --invert-mag --time-format iso --pts-per-knot 10 --degree 3 --n-bootstrap 60 --seed 42 --plot output.png
+# With real AAVSO data, use the CLI (magnitudes handled directly):
+# reflection-method find data.csv -x DATE-OBS -y MAG -w MAG_ERR -t iso -k 10 -d 3 -b 60 -s 42 -p output.png

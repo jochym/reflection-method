@@ -54,9 +54,9 @@ def load_aavso(
     Returns
     -------
     tuple[np.ndarray, np.ndarray, np.ndarray, np.datetime64, str, np.ndarray]
-        ``(x_minutes, y_flux, w, t0_utc, star_name, mag_err)`` where ``x`` is
-        the time in minutes from the first observation, ``y`` the
-        median-normalized relative flux, ``w`` the weights ``1 / MAG_ERR``,
+        ``(x_minutes, y_mag, w, t0_utc, star_name, mag_err)`` where ``x`` is
+        the time in minutes from the first observation, ``y`` the magnitude
+        as reported (logarithmic scale), ``w`` the weights ``1 / MAG_ERR``,
         ``t0_utc`` the first timestamp, ``star_name`` the value of the
         ``NAME`` column and ``mag_err`` the photometric error of each point
         in magnitudes (the ``MAG_ERR`` column as-is).
@@ -83,9 +83,8 @@ def load_aavso(
     t0 = ts.min()
     x = ((ts - t0) / np.timedelta64(1, "m")).astype(float)
 
-    mag = np.array([float(r[y_col]) for r in rows])
-    # Magnitude -> relative flux, normalized to the median (dimensionless)
-    y = 10.0 ** (-0.4 * (mag - float(np.median(mag))))
+    # Magnitudes are used as-is, on the logarithmic scale
+    y = np.array([float(r[y_col]) for r in rows])
 
     err = np.array([float(r[err_col]) for r in rows])
     w = 1.0 / np.maximum(err, 1e-6)
@@ -99,7 +98,8 @@ def analyze_star(path: Path, out_png: Path) -> tuple[str, float, float]:
     x, y, w, t0, star_name, _ = load_aavso(path)
     rng = np.random.default_rng(SEED)
 
-    # High-level pipeline (returns the bootstrap samples for the histogram)
+    # High-level pipeline (returns the bootstrap samples for the histogram).
+    # An eclipse is a *maximum* of the magnitude light curve -> find_peak=True.
     result, x0_boot = find_minimum(
         x, y,
         pts_per_knot=10,
@@ -109,12 +109,13 @@ def analyze_star(path: Path, out_png: Path) -> tuple[str, float, float]:
         x0_window=0.1,
         n_bootstrap=N_BOOTSTRAP,
         n_scan_boot=80,
+        find_peak=True,
         rng=rng,
         return_samples=True,
     )
 
     # Reconstruct intermediates needed by the diagnostic figure
-    x0_opt, x0_grid, sigma2 = find_x0(x, y, 10, 3, w, 200, 0.1)
+    x0_opt, x0_grid, sigma2 = find_x0(x, y, 10, 3, w, 200, 0.1, find_peak=True)
     spl1 = fit_spline(x, y, 10, 3, w)
     spl_sigma = UnivariateSpline(x0_grid, sigma2, k=3, s=0)
     xr = 2 * x0_opt - x
@@ -124,7 +125,8 @@ def analyze_star(path: Path, out_png: Path) -> tuple[str, float, float]:
     fig = plot_all(
         x, y, spl1, xr, spl2, x0_opt, result.x0_std,
         x0_grid, sigma2, spl_sigma, x0_boot,
-        xlabel="Time", ylabel="relative magnitude", x_unit="min",
+        xlabel="Time", ylabel="magnitude", x_unit="min",
+        invert_y=True, utc0=t0,
     )
     fig.suptitle(
         f"{star_name} — primary minimum {np.datetime_as_string(t0, unit='s')}Z\n"
@@ -140,8 +142,8 @@ def analyze_star(path: Path, out_png: Path) -> tuple[str, float, float]:
     t_min = np.datetime_as_string(
         t0 + np.timedelta64(int(result.x0 * 60), "s"), unit="s", timezone="UTC"
     )
-    print(f"{star_name:<12} x0 = {result.x0:7.2f} ± {result.x0_std:.2f} min  "
-          f"UTC: {t_min}  ->  {out_png.name}")
+    print(f"{star_name:<12} minimum {t_min}Z  ± {result.x0_std * 60:.0f} s  "
+          f"->  {out_png.name}")
     return star_name, result.x0, result.x0_std
 
 
@@ -156,18 +158,15 @@ def comparison_figure(results: list[tuple[str, float, float]], out_png: Path) ->
     for path, (name, x0, x0_std) in zip(STARS, results):
         x, y, w, t0, _, mag_err = load_aavso(path)
         color = "C0" if "V500" in str(path) else "C1"
-        # Relative magnitude (same shape as flux, error unchanged by the
-        # constant median offset — hence MAG_ERR applies as-is)
-        mag_rel = -2.5 * np.log10(y)
         ax.errorbar(
-            x - x0, mag_rel, yerr=mag_err,
+            x - x0, y, yerr=mag_err,
             fmt="o", ms=3.5, linewidth=0, alpha=0.9,
             color=color, ecolor=color, elinewidth=1.0, capsize=2.5,
             label=f"{name} (x0 = {x0:.2f} ± {x0_std:.2f} min)",
         )
     ax.axvline(0, color="red", linewidth=1.5)
     ax.set_xlabel("Time from minimum [min]")
-    ax.set_ylabel("relative magnitude")
+    ax.set_ylabel("magnitude")
     ax.set_title("Both eclipses aligned to their detected minima")
     ax.invert_yaxis()  # brighter (smaller magnitude) at the top
     ax.legend(framealpha=0.8)

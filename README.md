@@ -83,15 +83,16 @@ from reflection_method import find_minimum
 
 # x, y in any linear time units (JD, HJD, MJD, phase, minutes...)
 x = np.array([...])  # time
-y = np.array([...])  # flux or magnitude
+y = np.array([...])  # magnitude (logarithmic scale)
 
-result = find_minimum(x, y, pts_per_knot=10, degree=3, n_bootstrap=60)
+# An eclipse is a *maximum* of the magnitude light curve -> find_peak=True
+result = find_minimum(x, y, pts_per_knot=10, degree=3, n_bootstrap=60, find_peak=True)
 
 print(f"Minimum at x0 = {result.x0:.4f} ± {result.x0_std:.4f}")
 print(f"68% CI: [{result.x0_lo:.4f}, {result.x0_hi:.4f}]")
 ```
 
-Result is a `MinimumResult` NamedTuple with all values in the **same units as input `x`**. The library performs no time conversion.
+Result is a `MinimumResult` NamedTuple with all values in the **same units as input `x`**. The library performs no time conversion. If your data is already in **flux units** (eclipse = dip = minimum of `y`), simply omit `find_peak=True`.
 
 ## Algorithm
 
@@ -108,7 +109,8 @@ See [`examples/quickstart.py`](examples/quickstart.py) for a minimal script.
 
 See [`examples/plot_aavso.py`](examples/plot_aavso.py) for a full worked
 example on **real AAVSO photometry**: it loads two stars, finds each primary
-minimum, and saves the diagnostic figures to `examples/plots/`:
+minimum **directly on the magnitude scale** (`find_peak=True`), and saves the
+diagnostic figures to `examples/plots/`:
 
 ```bash
 pip install "reflection-method[plot]"
@@ -141,31 +143,29 @@ pip install "reflection-method[plot,cli]"
 
 # Run on AAVSO CSV file
 reflection-method find data.csv \
-    --x-col DATE-OBS --y-col MAG --w-col MAG_ERR --invert-mag \
-    --time-format iso \
-    --pts-per-knot 10 --degree 3 --n-scan 200 --n-bootstrap 60 --seed 42 \
-    --plot output.png
+    -x DATE-OBS -y MAG -w MAG_ERR \
+    -t iso -k 10 -d 3 -n 200 -b 60 -s 42 \
+    -p output.png
 ```
 
 **CLI Options:**
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--x-col` | `DATE-OBS` | Time column name |
-| `--y-col` | `MAG` | Magnitude/flux column name |
-| `--w-col` | (none) | Weight/error column name |
-| `--time-format` | `iso` | `iso` (DATE-OBS→UTC), `jd`, `hjd`, `mjd`, `phase`, `minutes` |
-| `--invert-mag` | `True` | Convert MAG to relative flux |
-| `--pts-per-knot` | `10` | Points per spline knot |
-| `--degree` | `3` | Spline degree (1-5) |
-| `--n-scan` | `200` | Scan resolution for x₀ search |
-| `--x0-window` | `0.1` | Scan window as fraction of x-range |
-| `--n-bootstrap` | `60` | Bootstrap iterations |
-| `--n-scan-boot` | `80` | Scan resolution per bootstrap iteration |
-| `--seed` | (none) | Random seed for reproducibility |
-| `--output`, `-o` | stdout | Output JSON file |
-| `--plot` | (none) | Save 4-panel plot to file |
-| `--plot-format` | `png` | `png`, `pdf`, `svg` |
+| Option | Short | Default | Description |
+|--------|-------|---------|-------------|
+| `--x-col` | `-x` | `DATE-OBS` | Time column name |
+| `--y-col` | `-y` | `MAG` | Magnitude column name |
+| `--w-col` | `-w` | (none) | Weight/error column name |
+| `--time-format` | `-t` | `iso` | `iso` (DATE-OBS→UTC) or `jd` (Julian Date) |
+| `--pts-per-knot` | `-k` | `10` | Points per spline knot |
+| `--degree` | `-d` | `3` | Spline degree (1-5) |
+| `--n-scan` | `-n` | `200` | Scan resolution for x₀ search |
+| `--x0-window` | `-W` | `0.1` | Scan window as fraction of x-range |
+| `--n-bootstrap` | `-b` | `60` | Bootstrap iterations |
+| `--n-scan-boot` | `-B` | `80` | Scan resolution per bootstrap iteration |
+| `--seed` | `-s` | (none) | Random seed for reproducibility |
+| `--output`, `-o` | — | stdout | Output JSON file |
+| `--plot` | `-p` | (none) | Save 4-panel plot to file |
+| `--plot-format` | `-F` | `png` | `png`, `pdf`, `svg` |
 
 **Output JSON includes:**
 
@@ -187,7 +187,8 @@ reflection-method find data.csv \
 The CLI handles:
 - AAVSO extended format (comments, header in `#NAME,DATE-OBS,...` line)
 - Time formats: `iso` (DATE-OBS→minutes + UTC), `jd`, `hjd`, `mjd`, `phase`, `minutes`
-- Magnitude → flux conversion (`--invert-mag`)
+- Magnitudes used directly on the logarithmic scale (the eclipse is a *maximum*
+  of the magnitude light curve; the algorithm runs with `find_peak=True`)
 - Weights from `MAG_ERR`
 - `--seed` for reproducible bootstrap
 
@@ -228,10 +229,14 @@ fig = plot_all(
     x, y, spl1, xr, spl2,
     x0_opt, x0_std,
     x0_grid, sigma2, spl_sigma, x0_boot,
-    xlabel="Time", ylabel="relative magnitude", x_unit="min"
+    xlabel="Time", ylabel="magnitude", x_unit="min", invert_y=True
 )
 fig.savefig("output.png", dpi=150, bbox_inches="tight")
 ```
+
+`invert_y=True` shows the magnitude axis with brighter stars on top, the
+standard convention. Pass `find_peak=True` to `find_minimum` when working
+with magnitudes (eclipse = maximum of the light curve).
 
 ### Reproducibility
 

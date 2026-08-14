@@ -1,6 +1,6 @@
 # reflection-method: Technical Documentation
 
-**Version:** 0.1.0 (Draft)  
+**Version:** 0.2.0 (Draft)  
 **Author:** Jochym  
 **Date:** 2024
 
@@ -41,7 +41,7 @@ Given data points `{(x_i, y_i)}` for `i = 1...N` with optional weights `w_i`:
    ```
    where `N_eff` is the number of combined points and `dof` accounts for spline degrees of freedom.
 
-4. **Optimization:** Find `x₀* = argmin σ₂(x₀)`. The function `σ₂(x₀)` is smooth and unimodal near the true minimum. We scan over a window around an initial guess, then refine using spline interpolation of the `σ₂` curve.
+4. **Optimization:** Find `x₀* = argmin σ₂(x₀)`. The function `σ₂(x₀)` is smooth and unimodal near the true minimum. We scan over a window around an initial guess, then refine the grid minimum with a local polynomial fit to the `σ₂` curve (Section 3.2).
 
 ### 2.3 Uncertainty Estimation: Residual Bootstrap
 
@@ -75,16 +75,46 @@ This residual bootstrap preserves the noise structure while reflecting the uncer
 1. **Initial guess:** Minimum of coarse spline fit to original data (2001-point grid).
 2. **Window:** `± x0_window * (xmax - xmin)` around guess (default 10% of range).
 3. **Grid:** `n_scan` points (default 200) linearly spaced in window.
-4. **Refinement:** `UnivariateSpline` interpolation of `σ₂(x₀)` grid, minimized with `minimize_scalar` (bounded Brent).
+4. **Refinement:** A local polynomial fit to the `σ₂(x₀)` grid.
 
-### 3.3 Bootstrap Details
+### 3.3 Refinement of the σ₂ Minimum
+
+The grid scan locates `σ₂(x₀)` to within the grid spacing. The true minimum
+is refined by fitting a polynomial to the `σ₂` curve *inside a narrow window
+around the grid minimum*:
+
+- The fit window is `± parabola_window * (x_grid_max - x_grid_min)` around
+  the grid minimum (default `parabola_window = 0.05`, i.e. 5% of the scan
+  range).
+- When at least **five** grid points fall in the window, a **quartic**
+  polynomial is fitted (`numpy.polyfit`, degree 4). The σ₂ curve is not
+  exactly parabolic near the minimum, so the higher order reduces bias.
+- With fewer than five but at least three points, a **parabola** is fitted.
+  With fewer than three, the grid minimum itself is used.
+- The minimum of the polynomial is located **analytically**: the roots of
+  the derivative (a cubic for the quartic) are filtered to those inside the
+  fit window, and the candidate (plus the window endpoints) with the lowest
+  polynomial value is chosen. For a parabola the vertex formula is used.
+- The result is clamped to the scan bounds.
+
+Rationale: interpolating the `σ₂` curve with a spline and minimizing it
+numerically (an earlier implementation) is unstable when the curve is
+nearly flat near the minimum — tiny noise then creates spurious local
+minima. A low-order polynomial fitted to a few local points is robust to
+this, because fitting averages over the noise instead of interpolating it.
+The same refinement is applied inside every bootstrap iteration, so the
+uncertainty estimate reflects the actual production algorithm.
+
+### 3.4 Bootstrap Details
 
 - **Residuals:** From initial spline fit (not the reflected fit).
 - **Resampling:** With replacement from residuals.
 - **Per-iteration scan:** Coarser grid (`n_scan_boot`, default 80) for speed.
+- **Refinement:** Same local polynomial fit as the main scan
+  (`parabola_window`).
 - **RNG:** NumPy PCG64 (`np.random.default_rng()`), seedable for reproducibility.
 
-### 3.4 Time/Unit Handling
+### 3.5 Time/Unit Handling
 
 The core library is **unit-agnostic**: `x` can be JD, HJD, MJD, phase, minutes, etc. All outputs (`x₀`, `σ`, percentiles) are in the same units as input `x`. Time conversion (e.g., DATE-OBS → minutes → UTC) is handled by the CLI layer.
 
@@ -178,6 +208,7 @@ The combined dataset (original + reflected) can be viewed as a form of self-cons
 | `degree` | 3 | 3 (cubic) standard. Degree 1 for very noisy data, 4–5 only for very dense, smooth curves. |
 | `n_scan` | 200 | Sufficient for smooth `σ₂` curve. Increase for very broad minima. |
 | `x0_window` | 0.1 | 5–20% of range. Must contain true minimum. Check scan plot. |
+| `parabola_window` | 0.05 | 2–10% of scan range. Window for the polynomial refinement; wider = more smoothing, narrower = more local. |
 | `n_bootstrap` | 60 | 50–200. More = better CI precision, slower. |
 | `n_scan_boot` | 80 | Coarser than main scan for speed. |
 
@@ -247,4 +278,4 @@ MIT License — see LICENSE file.
 
 ---
 
-*Document version 0.1.0 — accompanying reflection-method library v0.1.0*
+*Document version 0.2.0 — accompanying reflection-method library v0.2.0*

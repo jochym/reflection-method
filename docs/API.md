@@ -21,6 +21,7 @@ conversion.
 from reflection_method import (
     find_minimum,
     find_x0,
+    refine_x0_minimum,
     fit_spline,
     spline_variance,
     combine,
@@ -88,28 +89,51 @@ sorted by abscissa.
 - **Returns**: `(x_all, y_all, w_all)` tuple of sorted arrays; `w_all` is
   `None` if `w` is `None`.
 
-### `find_x0(x, y, pts_per_knot=10, degree=3, w=None, n_scan=200, x0_window=0.1, x0_initial_guess=None, find_peak=False)`
+### `find_x0(x, y, pts_per_knot=10, degree=3, w=None, n_scan=200, x0_window=0.1, x0_initial_guess=None, find_peak=False, parabola_window=0.05)`
 
 Scan trial reflection points to locate the minimum of σ₂(x₀). The σ₂ curve
 is evaluated on a grid centered on an initial guess (by default the minimum
 — or the maximum when `find_peak=True` — of a coarse spline fit to the data)
 and spanning `x0_window * (xmax - xmin)`. The minimum is refined with a
-cubic spline interpolation of σ₂(x₀) minimized by bounded Brent's method.
+local polynomial fit to σ₂(x₀) (see `refine_x0_minimum` below).
 
 - **Parameters**: `n_scan` — grid resolution (default 200);
   `x0_window` — scan window as a fraction of the x-range (default 0.1);
   `x0_initial_guess` — optional explicit initial guess (default None);
   `find_peak` — if True, the feature is a *maximum* of `y` (e.g. an eclipse
   on a magnitude scale) and the initial guess uses the spline maximum
-  instead of the minimum (default False).
+  instead of the minimum (default False); `parabola_window` — fit window for
+  the polynomial refinement as a fraction of the scan range (default 0.05).
 - **Returns**: `(x0_opt, x0_grid, sigma2_grid)` — refined minimum, scan
   grid, and σ₂ values at each grid point.
 
-### `bootstrap_x0(x, y, x0_opt, spl1, pts_per_knot, degree, w, n_bootstrap=60, n_scan_boot=80, x0_window=0.1, rng=None, return_samples=False, find_peak=False)`
+### `refine_x0_minimum(x0_grid, sigma2, parabola_window=0.05)`
+
+Refine the σ₂(x₀) minimum with a local polynomial fit. A quartic polynomial
+is fitted to the grid points inside `parabola_window` around the grid
+minimum — a parabola when fewer than five points fall in the window, and the
+grid minimum itself when fewer than three do. The minimum of the polynomial
+is located analytically (roots of the derivative, or the vertex formula for
+a parabola) and clamped to the scan bounds. The local fit is more stable
+than interpolating the σ₂ curve with a spline, which can produce spurious
+minima when the curve is flat near the minimum.
+
+- **Parameters**: `x0_grid` — scan grid; `sigma2` — σ₂ values at each grid
+  point; `parabola_window` — fit window fraction of the scan range
+  (default 0.05).
+- **Returns**: `(x0_opt, poly, window_lo, window_hi)` — refined minimum, the
+  fitted polynomial (`numpy.poly1d`), and the bounds of the fitted window in
+  the units of `x0_grid`. `poly` is a constant equal to the median σ₂ when
+  the fit is not possible. Pass `poly`, `window_lo` and `window_hi` to
+  `plot_all` to draw the fitted curve over the points it was fitted to.
+
+### `bootstrap_x0(x, y, x0_opt, spl1, pts_per_knot, degree, w, n_bootstrap=60, n_scan_boot=80, x0_window=0.1, rng=None, return_samples=False, find_peak=False, parabola_window=0.05)`
 
 Estimate the uncertainty of `x0` via **residual bootstrap**: residuals from
 the initial spline fit are resampled with replacement and added to the fit;
-the full scan is repeated per iteration at reduced resolution.
+the full scan is repeated per iteration at reduced resolution. Each
+iteration's minimum is refined with the same local polynomial fit as
+`find_x0`.
 
 - **Parameters**: `spl1` — initial spline fit to the original data;
   `n_bootstrap` — iterations (default 60; use 100–200 for tighter CIs);
@@ -119,12 +143,13 @@ the full scan is repeated per iteration at reduced resolution.
   append the array of individual bootstrap estimates to the return value;
   `find_peak` — if True, the per-iteration initial guess uses the spline
   maximum (eclipses on a magnitude scale); must match the value used in
-  `find_x0` (default False).
+  `find_x0` (default False); `parabola_window` — fit window fraction for the
+  polynomial refinement (default 0.05).
 - **Returns**: `(x0_std, x0_lo, x0_hi)` — bootstrap standard error (ddof=1)
   and the 16th/84th percentiles. With `return_samples=True` a fourth
   element `x0_boot` (the raw estimates, length `n_bootstrap`) is appended.
 
-### `find_minimum(x, y, pts_per_knot=10, degree=3, w=None, n_scan=200, x0_window=0.1, n_bootstrap=60, n_scan_boot=80, rng=None, return_samples=False, find_peak=False)`
+### `find_minimum(x, y, pts_per_knot=10, degree=3, w=None, n_scan=200, x0_window=0.1, n_bootstrap=60, n_scan_boot=80, rng=None, return_samples=False, find_peak=False, parabola_window=0.05)`
 
 Full pipeline: runs `find_x0`, then `bootstrap_x0`, and packages the result
 in a `MinimumResult`.
@@ -134,7 +159,8 @@ in a `MinimumResult`.
   bootstrap estimates; `find_peak` — if True, the eclipsing feature is a
   *maximum* of `y` (the eclipse is the largest magnitude value), so the
   initial-guess step looks for a peak instead of a dip. Use this when
-  working directly on magnitudes (default False).
+  working directly on magnitudes (default False); `parabola_window` — fit
+  window fraction for the polynomial refinement (default 0.05).
 - **Returns**: `MinimumResult`. With `return_samples=True`, a tuple
   `(result, x0_boot)` is returned instead, where `x0_boot` is the array of
   `n_bootstrap` individual estimates (useful for plotting the bootstrap
@@ -168,17 +194,19 @@ Plots the original data, the initial spline fit, and a vertical line at
 
 ### `plot_scan(x0_grid, sigma1, sigma2, spl_sigma, x0_opt, x0_grid_idx_min, xlabel="x₀", ylabel="residual σ", x_unit="", ax=None)`
 
-Plots σ₁ and σ₂ over the scan grid plus the interpolating spline for σ₂,
-with vertical lines at the grid minimum and the refined `x0_opt`.
+Plots σ₁ and σ₂ over the scan grid plus the polynomial fit to σ₂ (pass the
+`poly` returned by `refine_x0_minimum`), with vertical lines at the grid
+minimum and the refined `x0_opt`.
 
-### `plot_all(x, y, spl1, xr, spl2, x0_opt, x0_std, x0_grid, sigma2, spl_sigma, x0_boot, xlabel="Time", ylabel="magnitude", x_unit="", invert_y=False, **kwargs)`
+### `plot_all(x, y, spl1, xr, spl2, x0_opt, x0_std, x0_grid, sigma2, spl_sigma, x0_boot, xlabel="Time", ylabel="magnitude", x_unit="", invert_y=False, utc0=None, fit_window_lo=None, fit_window_hi=None, **kwargs)`
 
 Standard 2×2 diagnostic figure:
 
 1. **Light curve** — original + reflected points, original and refitted
    splines, `x0` line with uncertainty.
-2. **σ₂ scan** — σ₂(x₀) markers and smooth spline curve, x-axis limited to
-   `x0 ± 3σ`.
+2. **σ₂ scan** — σ₂(x₀) markers and the polynomial fit curve, drawn only
+   over the window used for the fit (`fit_window_lo` … `fit_window_hi`),
+   x-axis limited to `x0 ± 3σ` (same as the histogram).
 3. **Bootstrap histogram** — distribution of `x0` estimates, sharing the
    same x-limits as the σ₂ panel.
 
@@ -197,7 +225,7 @@ fig.savefig("output.png", dpi=150, bbox_inches="tight")
 ## CLI (optional `[cli]` extra)
 
 ```bash
-reflection-method find DATA.csv \
+reflection-method DATA.csv \
     -x DATE-OBS -y MAG -w MAG_ERR \
     -t iso -k 10 -d 3 -n 200 -b 60 -s 42 \
     -o result.json -p diagnostic.png
@@ -214,6 +242,7 @@ reflection-method find DATA.csv \
 | `--degree` | `-d` | `3` | Spline degree (1–5) |
 | `--n-scan` | `-n` | `200` | Scan resolution for x₀ |
 | `--x0-window` | `-W` | `0.1` | Scan window as fraction of x-range |
+| `--parabola-window` | `-P` | `0.05` | Fit window for polynomial refinement, as fraction of scan range |
 | `--n-bootstrap` | `-b` | `60` | Bootstrap iterations |
 | `--n-scan-boot` | `-B` | `80` | Bootstrap scan resolution |
 | `--seed` | `-s` | (none) | Random seed for reproducibility |

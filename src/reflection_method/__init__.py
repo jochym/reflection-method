@@ -13,6 +13,7 @@ from .core import (
     spline_variance,
     combine,
     find_x0,
+    refine_x0_minimum,
     bootstrap_x0,
     find_minimum,
 )
@@ -28,7 +29,7 @@ try:
 except ImportError:
     _PLOT_AVAILABLE = False
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "MinimumResult",
@@ -36,6 +37,7 @@ __all__ = [
     "spline_variance",
     "combine",
     "find_x0",
+    "refine_x0_minimum",
     "bootstrap_x0",
     "find_minimum",
 ]

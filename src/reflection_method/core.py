@@ -17,8 +17,7 @@ References
 
 from typing import Optional
 import numpy as np
-from scipy.interpolate import LSQUnivariateSpline, UnivariateSpline
-from scipy.optimize import minimize_scalar
+from scipy.interpolate import LSQUnivariateSpline
 
 from .result import MinimumResult
 
@@ -185,6 +184,71 @@ def combine(
     return x_all[order], y_all[order], (w_all[order] if w_all is not None else None)
 
 
+def refine_x0_minimum(
+    x0_grid: np.ndarray,
+    sigma2: np.ndarray,
+    parabola_window: float = 0.05,
+) -> tuple[float, np.poly1d, float, float]:
+    """Refine the σ₂(x₀) minimum with a local polynomial fit.
+
+    The σ₂(x₀) curve is smooth near the minimum but not exactly parabolic,
+    so a quartic polynomial is fitted to the grid points inside a narrow
+    window around the grid minimum — a parabola only when fewer than five
+    points fall in the window, and the grid minimum itself when fewer than
+    three do. Fitting a polynomial to a few local points avoids the
+    unstable minima that interpolating splines produce when the σ₂ curve is
+    flat. The minimum of the polynomial is located analytically from the
+    roots of its derivative (or from the vertex formula for the parabola)
+    and clamped to the scan bounds.
+
+    Parameters
+    ----------
+    x0_grid : np.ndarray
+        Scan grid of trial reflection points.
+    sigma2 : np.ndarray
+        σ₂ values at each grid point, same length as ``x0_grid``.
+    parabola_window : float, optional
+        Fraction of the scan range around the grid minimum used for the
+        polynomial fit. Default 0.05 (5%).
+
+    Returns
+    -------
+    tuple[float, np.poly1d, float, float]
+        ``(x0_opt, poly, window_lo, window_hi)`` where ``x0_opt`` is the
+        refined minimum, ``poly`` the fitted polynomial (a constant equal to
+        the median σ₂ when the fit is not possible), and ``window_lo`` /
+        ``window_hi`` the bounds of the fitted window in the same units as
+        ``x0_grid`` (useful for plotting).
+    """
+    idx_min = int(np.argmin(sigma2))
+    hw = parabola_window * (x0_grid[-1] - x0_grid[0])
+    mask = np.abs(x0_grid - x0_grid[idx_min]) <= hw
+    x_fit = x0_grid[mask]
+    y_fit = sigma2[mask]
+    window_lo = float(x_fit[0])
+    window_hi = float(x_fit[-1])
+
+    if len(x_fit) >= 5:
+        coeffs = np.polyfit(x_fit, y_fit, 4)
+        deriv = np.polyder(coeffs)
+        roots = np.roots(deriv)
+        in_range = (roots.real >= window_lo) & (roots.real <= window_hi) & np.isreal(roots)
+        candidates = roots[in_range].real
+        if len(candidates) > 0:
+            eval_points = np.concatenate([candidates, [window_lo, window_hi]])
+            x0_opt = float(eval_points[np.argmin(np.polyval(coeffs, eval_points))])
+            x0_opt = max(x0_grid[0], min(x0_grid[-1], x0_opt))
+            return x0_opt, np.poly1d(coeffs), window_lo, window_hi
+    elif len(x_fit) >= 3:
+        coeffs = np.polyfit(x_fit, y_fit, 2)
+        if coeffs[0] > 0:
+            x0_opt = float(-coeffs[1] / (2 * coeffs[0]))
+            x0_opt = max(x0_grid[0], min(x0_grid[-1], x0_opt))
+            return x0_opt, np.poly1d(coeffs), window_lo, window_hi
+
+    return float(x0_grid[idx_min]), np.poly1d([0.0, 0.0, float(np.median(sigma2))]), window_lo, window_hi
+
+
 def find_x0(
     x: np.ndarray,
     y: np.ndarray,
@@ -195,6 +259,7 @@ def find_x0(
     x0_window: float = 0.1,
     x0_initial_guess: Optional[float] = None,
     find_peak: bool = False,
+    parabola_window: float = 0.05,
 ) -> tuple[float, np.ndarray, np.ndarray]:
     """Scan trial reflection points to find the minimum of σ₂(x₀).
 
@@ -202,8 +267,8 @@ def find_x0(
     fitted to the combined (original + reflected) data for a grid of trial
     reflection points ``x0``. The grid is centered on an initial guess and
     spans a window of width ``x0_window * (xmax - xmin)``. The minimum is
-    refined by fitting a cubic spline to the ``σ₂(x₀)`` curve and minimizing
-    it with Brent's method.
+    refined with a local polynomial fit to the ``σ₂(x₀)`` curve (see
+    :func:`refine_x0_minimum`).
 
     Parameters
     ----------
@@ -232,6 +297,11 @@ def find_x0(
         Initial guess for the minimum location. If None (default), the minimum
         (or maximum when ``find_peak=True``) of a coarse spline fit to the
         original data is used (evaluated on a 2001-point grid).
+    parabola_window : float, optional
+        Fraction of the scan range to use for polynomial refinement around the
+        grid minimum. Default 0.05 (5% of scan range). Must be positive.
+        A smaller window uses fewer points for the fit; larger includes more
+        of the curve. The fitted minimum is clamped to the scan bounds.
 
     Returns
     -------
@@ -254,9 +324,12 @@ def find_x0(
     data at each trial ``x0``. A floor of 1e-6 is applied to avoid numerical
     issues.
 
-    The refinement uses an interpolating cubic spline (``UnivariateSpline``
-    with ``s=0``) through the ``(x0_grid, σ₂)`` points, minimized with
-    SciPy's ``minimize_scalar`` (bounded Brent method).
+    The refinement fits a quartic polynomial to σ₂ values within
+    ``parabola_window`` of the grid minimum — a parabola when fewer than five
+    points fall in the window, and the grid minimum itself when fewer than
+    three do. The polynomial minimum is found analytically and clamped to the
+    scan bounds. The local fit avoids the unstable minima that interpolating
+    splines produce when the σ₂ curve is flat.
 
     Examples
     --------
@@ -292,10 +365,7 @@ def find_x0(
 
     sigma2 = np.maximum(sigma2, 1e-6)
 
-    # Refine minimum with spline interpolation
-    spl_sigma = UnivariateSpline(x0_grid, sigma2, k=3, s=0)
-    res = minimize_scalar(spl_sigma, bounds=(x0_grid[0], x0_grid[-1]), method="bounded")
-    x0_opt = float(res.x)
+    x0_opt, _, _, _ = refine_x0_minimum(x0_grid, sigma2, parabola_window)
 
     return x0_opt, x0_grid, sigma2
 
@@ -314,6 +384,7 @@ def bootstrap_x0(
     rng: Optional[np.random.Generator] = None,
     return_samples: bool = False,
     find_peak: bool = False,
+    parabola_window: float = 0.05,
 ) -> tuple[float, float, float] | tuple[float, float, float, np.ndarray]:
     """Estimate uncertainty of x0 via residual bootstrap.
 
@@ -354,6 +425,9 @@ def bootstrap_x0(
         initial guess then uses the maximum of the bootstrap spline instead of
         the minimum. Must match the ``find_peak`` value used in ``find_x0``.
         Default False.
+    parabola_window : float, optional
+        Fraction of the per-iteration scan range for polynomial refinement.
+        Default 0.05 (5%). Same behavior as in ``find_x0``.
     rng : np.random.Generator or None, optional
         Random number generator. If None, a new PCG64 generator is created.
         Pass a seeded generator for reproducible results.
@@ -381,6 +455,8 @@ def bootstrap_x0(
     The per-iteration scan uses a coarser grid (``n_scan_boot``) and the same
     window fraction ``x0_window``. The initial guess for each bootstrap
     iteration is the minimum of a coarse spline fit to the bootstrap sample.
+    Each iteration's minimum is refined with the same local polynomial fit as
+    in :func:`find_x0`.
 
     For reproducibility, pass a seeded generator:
     ``rng = np.random.default_rng(42)``.
@@ -422,8 +498,8 @@ def bootstrap_x0(
             sig[i] = np.sqrt(spline_variance(sp, xs, ys))
 
         sig = np.maximum(sig, 1e-6)
-        spl_sig = UnivariateSpline(grid, sig, k=3, s=0)
-        x0_boot[k] = minimize_scalar(spl_sig, bounds=(grid[0], grid[-1]), method="bounded").x
+
+        x0_boot[k], _, _, _ = refine_x0_minimum(grid, sig, parabola_window)
 
     x0_std = float(x0_boot.std(ddof=1))
     x0_lo = float(np.percentile(x0_boot, 16))
@@ -447,6 +523,7 @@ def find_minimum(
     rng: Optional[np.random.Generator] = None,
     return_samples: bool = False,
     find_peak: bool = False,
+    parabola_window: float = 0.05,
 ) -> MinimumResult | tuple[MinimumResult, np.ndarray]:
     """Full pipeline: find the light-curve minimum and its uncertainty.
 
@@ -484,6 +561,9 @@ def find_minimum(
         minimum is the largest magnitude value. This changes the initial-guess
         step of the scan (and of each bootstrap iteration) from the minimum to
         the maximum of the spline fit. Default False.
+    parabola_window : float, optional
+        Fraction of the scan range for polynomial refinement in both the main
+        scan and each bootstrap iteration. Default 0.05 (5%).
     rng : np.random.Generator or None, optional
         Random number generator for bootstrap. Pass a seeded generator for
         reproducibility. Default is a new PCG64 generator.
@@ -539,6 +619,7 @@ def find_minimum(
     x0_opt, x0_grid, sigma2 = find_x0(
         x, y, pts_per_knot, degree, w, n_scan, x0_window,
         find_peak=find_peak,
+        parabola_window=parabola_window,
     )
 
     # Initial spline for bootstrap
@@ -549,6 +630,7 @@ def find_minimum(
         x, y, x0_opt, spl1, pts_per_knot, degree, w,
         n_bootstrap, n_scan_boot, x0_window, rng, True,
         find_peak=find_peak,
+        parabola_window=parabola_window,
     )
 
     sigma_min = float(np.min(sigma2))

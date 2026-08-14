@@ -26,9 +26,9 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.interpolate import UnivariateSpline
 
 from reflection_method import combine, find_minimum, find_x0, fit_spline
+from reflection_method.core import refine_x0_minimum
 from reflection_method.plot import plot_all
 
 # Location of the AAVSO fixtures (also used by the test suite)
@@ -115,9 +115,15 @@ def analyze_star(path: Path, out_png: Path) -> tuple[str, float, float]:
     )
 
     # Reconstruct intermediates needed by the diagnostic figure
-    x0_opt, x0_grid, sigma2 = find_x0(x, y, 10, 3, w, 200, 0.1, find_peak=True)
+    x0_opt, x0_grid, sigma2 = find_x0(
+        x, y, pts_per_knot=10, degree=3, w=w, n_scan=200, x0_window=0.1,
+        find_peak=True,
+    )
     spl1 = fit_spline(x, y, 10, 3, w)
-    spl_sigma = UnivariateSpline(x0_grid, sigma2, k=3, s=0)
+
+    # Polynomial fit for the σ₂ curve, matching the algorithm's refinement
+    _, spl_sigma, fit_window_lo, fit_window_hi = refine_x0_minimum(x0_grid, sigma2)
+
     xr = 2 * x0_opt - x
     x_all, y_all, w_all = combine(x, y, x0_opt, w)
     spl2 = fit_spline(x_all, y_all, 20, 3, w_all)
@@ -127,6 +133,7 @@ def analyze_star(path: Path, out_png: Path) -> tuple[str, float, float]:
         x0_grid, sigma2, spl_sigma, x0_boot,
         xlabel="Time", ylabel="magnitude", x_unit="min",
         invert_y=True, utc0=t0,
+        fit_window_lo=fit_window_lo, fit_window_hi=fit_window_hi,
     )
     fig.suptitle(
         f"{star_name} — primary minimum {np.datetime_as_string(t0, unit='s')}Z\n"
@@ -142,7 +149,7 @@ def analyze_star(path: Path, out_png: Path) -> tuple[str, float, float]:
     t_min = np.datetime_as_string(
         t0 + np.timedelta64(int(result.x0 * 60), "s"), unit="s", timezone="UTC"
     )
-    print(f"{star_name:<12} minimum {t_min}Z  ± {result.x0_std * 60:.0f} s  "
+    print(f"{star_name:<12} minimum {t_min}  ± {result.x0_std * 60:.0f} s  "
           f"->  {out_png.name}")
     return star_name, result.x0, result.x0_std
 

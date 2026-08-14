@@ -40,6 +40,11 @@ The algorithm therefore:
    standard deviation σ₂.
 4. Repeats steps 2–3 for a grid of trial values: the true minimum is the
    `x₀` that makes the combined data **most symmetric**, i.e. minimises σ₂.
+   The grid minimum is refined with a **local polynomial fit** to the σ₂
+   curve — a quartic fitted inside a narrow window around the grid minimum
+   (a parabola when fewer points are available). This is more stable than
+   interpolating the σ₂ curve with a spline, which can produce spurious
+   minima when the curve is flat near the minimum.
 5. Quantifies the uncertainty with a **bootstrap**: residuals are resampled,
    the whole search is repeated, and the spread of the resulting `x₀`
    estimates gives the standard error and a 68% confidence interval.
@@ -98,7 +103,7 @@ Result is a `MinimumResult` NamedTuple with all values in the **same units as in
 
 1. Fit a low-order spline to the original data
 2. Scan reflection point `x0` — for each candidate, reflect all points about `x0`, combine with original, refit spline, compute residual standard deviation `σ₂`
-3. The `x0` minimizing `σ₂` is the eclipse minimum
+3. Refine the grid minimum with a local polynomial fit to `σ₂` (quartic by default; see `parabola_window`)
 4. Bootstrap uncertainty: resample residuals, repeat scan, compute percentiles
 
 ## Examples
@@ -121,13 +126,13 @@ See [`examples/notebook/example.ipynb`](examples/notebook/example.ipynb) for a f
 
 ### Results on real AAVSO data
 
-Eclipse minimum of **V500 Peg** (2026-08-08, 120 points) — `x0 = 94.88 ± 0.18 min`
-from start, i.e. `2026-08-08T22:14:04Z`:
+Eclipse minimum of **V500 Peg** (2026-08-08, 120 points) — `x0 = 94.82 ± 0.15 min`
+from start, i.e. `2026-08-08T22:14:01Z`:
 
 ![V500 Peg reflection-method diagnostics](examples/plots/V500_result.png)
 
-Eclipse minimum of **V456 Cyg** (2026-07-29, 142 points) — `x0 = 54.62 ± 0.26 min`
-from start, i.e. `2026-07-29T21:57:19Z`:
+Eclipse minimum of **V456 Cyg** (2026-07-29, 142 points) — `x0 = 54.69 ± 0.16 min`
+from start, i.e. `2026-07-29T21:57:23Z`:
 
 ![V456 Cyg reflection-method diagnostics](examples/plots/V456_result.png)
 
@@ -142,7 +147,7 @@ Both stars' eclipses aligned to their detected minima:
 pip install "reflection-method[plot,cli]"
 
 # Run on AAVSO CSV file
-reflection-method find data.csv \
+reflection-method data.csv \
     -x DATE-OBS -y MAG -w MAG_ERR \
     -t iso -k 10 -d 3 -n 200 -b 60 -s 42 \
     -p output.png
@@ -160,6 +165,7 @@ reflection-method find data.csv \
 | `--degree` | `-d` | `3` | Spline degree (1-5) |
 | `--n-scan` | `-n` | `200` | Scan resolution for x₀ search |
 | `--x0-window` | `-W` | `0.1` | Scan window as fraction of x-range |
+| `--parabola-window` | `-P` | `0.05` | Fit window for polynomial refinement, as fraction of scan range |
 | `--n-bootstrap` | `-b` | `60` | Bootstrap iterations |
 | `--n-scan-boot` | `-B` | `80` | Scan resolution per bootstrap iteration |
 | `--seed` | `-s` | (none) | Random seed for reproducibility |
@@ -171,15 +177,15 @@ reflection-method find data.csv \
 
 ```json
 {
-  "x0": 94.88,
-  "x0_std": 0.19,
-  "x0_lo": 94.74,
-  "x0_hi": 94.99,
-  "sigma_min": 0.013,
+  "x0": 94.82,
+  "x0_std": 0.15,
+  "x0_lo": 94.67,
+  "x0_hi": 94.96,
+  "sigma_min": 0.0152,
   "n_points": 120,
   "n_bootstrap": 60,
-  "utc_time": "2026-08-08T22:14:04Z",
-  "utc_uncertainty_s": 11.4,
+  "utc_time": "2026-08-08T22:14:01Z",
+  "utc_uncertainty_s": 9.0,
   "parameters": {...}
 }
 ```
@@ -198,11 +204,12 @@ The CLI handles:
 
 ```python
 from reflection_method import (
-    fit_spline,       # Fit LSQ spline to data
-    find_x0,          # Scan x0 to minimize σ₂
-    bootstrap_x0,     # Residual bootstrap uncertainty
-    find_minimum,     # Full pipeline
-    MinimumResult,    # Result container
+    fit_spline,        # Fit LSQ spline to data
+    find_x0,           # Scan x0 to minimize σ₂
+    refine_x0_minimum, # Local polynomial refinement of the σ₂ minimum
+    bootstrap_x0,      # Residual bootstrap uncertainty
+    find_minimum,      # Full pipeline
+    MinimumResult,     # Result container
 )
 ```
 

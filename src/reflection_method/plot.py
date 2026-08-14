@@ -138,7 +138,7 @@ def plot_scan(
     x0_grid: np.ndarray,
     sigma1: np.ndarray,
     sigma2: np.ndarray,
-    spl_sigma: LSQUnivariateSpline,
+    spl_sigma: np.poly1d,
     x0_opt: float,
     x0_grid_idx_min: int,
     xlabel: str = "x₀",
@@ -146,7 +146,7 @@ def plot_scan(
     x_unit: str = "",
     ax: Optional[Axes] = None,
 ) -> Axes:
-    """Plot σ₁, σ₂, and spline fit to σ₂ with vertical lines at minima.
+    """Plot σ₁, σ₂, and the polynomial fit to σ₂ with vertical lines at minima.
 
     Parameters
     ----------
@@ -156,8 +156,8 @@ def plot_scan(
         σ values with respect to the original spline (σ₁).
     sigma2 : np.ndarray
         σ values with respect to the refitted spline (σ₂).
-    spl_sigma : LSQUnivariateSpline
-        Cubic spline interpolating ``(x0_grid, sigma2)``.
+    spl_sigma : np.poly1d
+        Polynomial fit (np.poly1d) to the σ₂ curve.
     x0_opt : float
         Optimal reflection point from the refined minimum.
     x0_grid_idx_min : int
@@ -182,8 +182,8 @@ def plot_scan(
     xs = np.linspace(x0_grid[0], x0_grid[-1], 200)
 
     ax.plot(x0_grid, sigma1, label="σ w.r.t. original spline", color="royalblue", linewidth=1)
-    ax.plot(x0_grid, sigma2, label="σ w.r.t. refitted spline", color="darkgreen", linewidth=1)
-    ax.plot(xs, spl_sigma(xs), label="spline for σ₂", color="darkgreen", linestyle=":", linewidth=1.5)
+    ax.plot(x0_grid, sigma2, label="σ w.r.t. refitted spline", color="mediumseagreen", linewidth=1)
+    ax.plot(xs, spl_sigma(xs), label="polynomial fit to σ₂", color="darkgreen", linestyle=":", linewidth=1.5)
 
     ax.axvline(x0_grid[x0_grid_idx_min], color="royalblue", linestyle="--", linewidth=1, alpha=0.7)
     x0_label = f"x₀ = {x0_opt:.2f}"
@@ -210,13 +210,15 @@ def plot_all(
     x0_std: float,
     x0_grid: np.ndarray,
     sigma2: np.ndarray,
-    spl_sigma: LSQUnivariateSpline,
+    spl_sigma: np.poly1d,
     x0_boot: np.ndarray,
     xlabel: str = "Time",
     ylabel: str = "magnitude",
     x_unit: str = "",
     invert_y: bool = False,
     utc0: Optional[np.datetime64] = None,
+    fit_window_lo: Optional[float] = None,
+    fit_window_hi: Optional[float] = None,
     **kwargs,
 ) -> Figure:
     """Create the standard 4-panel reflection-method diagnostic figure.
@@ -227,8 +229,9 @@ def plot_all(
        points, original spline, refitted spline (data + reflection), and
        the optimal ``x₀`` vertical line with uncertainty.
     2. **σ₂ scan (top right)**: The ``σ₂(x₀)`` curve as data points with the
-       interpolating spline, and the optimal ``x₀`` line. X-axis limited to
-       ``±3σ`` around the optimum for consistency with the histogram.
+       polynomial fit (drawn only over the window used for the fit), and the
+       optimal ``x₀`` line. X-axis limited to ``±3σ`` around the optimum for
+       consistency with the histogram.
     3. **Bootstrap histogram (bottom right)**: Distribution of bootstrap
        ``x₀`` estimates with the optimal ``x₀`` line. Same x-axis limits
        as the σ₂ scan.
@@ -253,8 +256,9 @@ def plot_all(
         Scan grid of trial ``x₀`` values.
     sigma2 : np.ndarray
         ``σ₂`` values at each grid point.
-    spl_sigma : LSQUnivariateSpline
-        Cubic spline interpolating ``(x0_grid, sigma2)``.
+    spl_sigma : np.poly1d
+        Polynomial fit (``np.poly1d``) to ``(x0_grid, sigma2)``, as returned
+        by :func:`reflection_method.core.refine_x0_minimum`.
     x0_boot : np.ndarray
         Array of bootstrap ``x₀`` estimates (length = ``n_bootstrap``).
     xlabel : str, optional
@@ -277,6 +281,14 @@ def plot_all(
         panels (σ₂ scan and histogram) always use relative minutes from x₀
         to show precision. Default None (numeric x-axis, ``x_unit`` used
         for the labels).
+    fit_window_lo : float or None, optional
+        Lower bound of the window used for the polynomial fit of ``σ₂``,
+        in the same units as ``x0_grid``. The fit curve is drawn only over
+        this window (the points actually used for the fit). Default None
+        (draw over the whole scan range).
+    fit_window_hi : float or None, optional
+        Upper bound of the fit window, same convention as
+        ``fit_window_lo``. Default None.
     **kwargs : dict
         Additional keyword arguments (currently unused, for forward
         compatibility).
@@ -290,8 +302,12 @@ def plot_all(
     -----
     - The right-hand panels (σ₂ scan and histogram) share the same x-axis
       limits: ``x₀ ± 3 * x0_std``. This ensures consistent visual comparison.
-    - The σ₂ scan y-limits are automatically set to show the minimum region
-      with a 10% padding.
+    - The σ₂ scan y-limits are automatically set to the range of the points
+      visible within the ``±3σ`` window, with a 10% padding.
+    - The σ₂ scan uses a polynomial fit to the curve (quartic by default);
+      the fit curve is drawn only over the window that was actually used for
+      the fit (``fit_window_lo`` … ``fit_window_hi``), so the fit can be
+      judged against the points it was fitted to.
     - The figure size is 10×8 inches with width ratios 0.62:0.38 and
       height ratios 0.5:0.5.
     - The layout uses ``plt.tight_layout()`` for automatic spacing.
@@ -300,22 +316,24 @@ def plot_all(
     --------
     >>> from reflection_method import find_minimum, find_x0, fit_spline, combine
     >>> from reflection_method.plot import plot_all
+    >>> from reflection_method.core import refine_x0_minimum
     >>> import matplotlib.pyplot as plt
     >>>
     >>> result = find_minimum(x, y)
     >>> x0_opt, x0_grid, sigma2 = find_x0(x, y)
+    >>> _, spl_sigma, fit_lo, fit_hi = refine_x0_minimum(x0_grid, sigma2)
     >>> spl1 = fit_spline(x, y)
     >>> xr = 2 * x0_opt - x
     >>> spl2 = fit_spline(*combine(x, y, x0_opt))
-    >>> spl_sigma = UnivariateSpline(x0_grid, sigma2, k=3, s=0)
-    >>> # Bootstrap samples needed for histogram:
-    >>> from reflection_method.core import bootstrap_x0
-    >>> _, _, _ = bootstrap_x0(x, y, x0_opt, spl1, 10, 3, None, 60, 80, 0.1)
-    >>> # ... capture x0_boot from bootstrap_x0 internals or re-run
+    >>> # Bootstrap samples needed for the histogram:
+    >>> from reflection_method import bootstrap_x0
+    >>> *_, x0_boot = bootstrap_x0(x, y, x0_opt, spl1, 10, 3, None, 60, 80, 0.1,
+    ...                            return_samples=True)
     >>>
     >>> fig = plot_all(x, y, spl1, xr, spl2, x0_opt, result.x0_std,
     ...                x0_grid, sigma2, spl_sigma, x0_boot,
-    ...                xlabel="Time", ylabel="Flux", x_unit="min")
+    ...                xlabel="Time", ylabel="Flux", x_unit="min",
+    ...                fit_window_lo=fit_lo, fit_window_hi=fit_hi)
     >>> fig.savefig("output.png", dpi=150, bbox_inches="tight")
     """
     fig = plt.figure(figsize=(10, 8))
@@ -374,25 +392,28 @@ def plot_all(
         ax_main.invert_yaxis()
 
     # --- Panel 2: σ₂ ---
-    # Dense sampling for smooth spline curve
-    # Plot relative to x0_opt (in minutes) to show precision, not absolute time
+    # Relative to x0_opt to show precision, same x-limits as the histogram
     x0_rel = x0_grid - x0_opt
-    xs_sig_rel = np.linspace(x0_rel[0], x0_rel[-1], 500)
-    ax_sigma.plot(x0_rel, sigma2, 'o', label="σ₂(x₀)", color="darkgreen", markersize=3, alpha=0.7, linewidth=0)
-    ax_sigma.plot(xs_sig_rel, spl_sigma(xs_sig_rel + x0_opt), label="σ₂ spline", color="darkgreen", linestyle="-", linewidth=1.5)
+    ax_sigma.plot(x0_rel, sigma2, 'o', label="σ₂(x₀)", color="mediumseagreen", markersize=3, alpha=0.7, linewidth=0)
     ax_sigma.axvline(0, color="red", linewidth=1.5)
 
-    # Set x-limits to ±3σ around x0_opt for consistency with histogram
-    x0_rel_xlim = (-3 * x0_std, 3 * x0_std)
-    ax_sigma.set_xlim(x0_rel_xlim)
-    # Set y-limits to show the minimum region nicely
-    sigma_min = float(np.min(sigma2))
-    sigma_max_in_range = float(np.max(sigma2[(x0_grid >= x0_xlim[0]) & (x0_grid <= x0_xlim[1])]))
-    y_pad = 0.1 * (sigma_max_in_range - sigma_min) if sigma_max_in_range > sigma_min else 0.01
-    ax_sigma.set_ylim(sigma_min - y_pad, sigma_max_in_range + y_pad)
+    # Fit curve drawn only over the window used for the polynomial fit
+    fit_lo = x0_grid[0] if fit_window_lo is None else fit_window_lo
+    fit_hi = x0_grid[-1] if fit_window_hi is None else fit_window_hi
+    xs_fit_rel = np.linspace(fit_lo - x0_opt, fit_hi - x0_opt, 200)
+    ax_sigma.plot(xs_fit_rel, spl_sigma(xs_fit_rel + x0_opt), label="polynomial fit to σ₂", color="darkgreen", linestyle="-", linewidth=1.5)
+
+    # Same x-limits as the histogram (±3σ)
+    ax_sigma.set_xlim(-3 * x0_std, 3 * x0_std)
+    # Y-limits from the points visible within the ±3σ window
+    in_view = np.abs(x0_rel) <= 3 * x0_std
+    sigma_min = float(sigma2[in_view].min())
+    sigma_max = float(sigma2[in_view].max())
+    y_pad = 0.1 * (sigma_max - sigma_min) if sigma_max > sigma_min else 0.01
+    ax_sigma.set_ylim(sigma_min - y_pad, sigma_max + y_pad)
 
     ax_sigma.set_ylabel("σ₂")
-    ax_sigma.set_title("σ₂ scan")
+    ax_sigma.set_title("σ₂(x₀) scan")
     ax_sigma.legend(fontsize=8, framealpha=0.7)
     ax_sigma.grid(True, alpha=0.3)
     ax_sigma.tick_params(labelbottom=False)
@@ -408,7 +429,7 @@ def plot_all(
     x0_rel_xlim = (-3 * x0_std, 3 * x0_std)
     ax_hist.set_xlim(x0_rel_xlim)
 
-    ax_hist.set_xlabel("Δx₀ [min]")
+    ax_hist.set_xlabel(f"Δx₀ [{x_unit}]" if x_unit else "Δx₀")
     ax_hist.set_ylabel("count")
     ax_hist.set_title("Bootstrap distribution of x₀")
     ax_hist.legend(fontsize=8, framealpha=0.7)

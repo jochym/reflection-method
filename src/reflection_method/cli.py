@@ -290,6 +290,7 @@ def result_to_dict(
 @click.option("-d", "--degree", default=3, type=int, help="Spline degree (1-5)")
 @click.option("-n", "--n-scan", default=200, type=int, help="Scan resolution for x0 search")
 @click.option("-W", "--x0-window", default=0.1, type=float, help="Scan window as fraction of x-range")
+@click.option("-P", "--parabola-window", default=0.05, type=float, help="Fraction of scan range for polynomial refinement of x0")
 @click.option("-b", "--n-bootstrap", default=60, type=int, help="Bootstrap iterations")
 @click.option("-B", "--n-scan-boot", default=80, type=int, help="Scan resolution per bootstrap iteration")
 @click.option("-s", "--seed", default=None, type=int, help="Random seed for reproducibility")
@@ -306,6 +307,7 @@ def find(
     degree: int,
     n_scan: int,
     x0_window: float,
+    parabola_window: float,
     n_bootstrap: int,
     n_scan_boot: int,
     seed: Optional[int],
@@ -353,6 +355,7 @@ def find(
             w=w,
             n_scan=n_scan,
             x0_window=x0_window,
+            parabola_window=parabola_window,
             n_bootstrap=n_bootstrap,
             n_scan_boot=n_scan_boot,
             find_peak=True,
@@ -372,6 +375,7 @@ def find(
         "degree": degree,
         "n_scan": n_scan,
         "x0_window": x0_window,
+        "parabola_window": parabola_window,
         "n_bootstrap": n_bootstrap,
         "n_scan_boot": n_scan_boot,
     }
@@ -392,12 +396,16 @@ def find(
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
             from reflection_method import find_x0, fit_spline, combine
-            from scipy.interpolate import UnivariateSpline
+            from reflection_method.core import refine_x0_minimum
 
             # Reconstruct intermediate data
-            x0_opt, x0_grid, sigma2 = find_x0(x, y, pts_per_knot, degree, w, n_scan, x0_window, find_peak=True)
+            x0_opt, x0_grid, sigma2 = find_x0(
+                x, y, pts_per_knot=pts_per_knot, degree=degree, w=w,
+                n_scan=n_scan, x0_window=x0_window,
+                find_peak=True, parabola_window=parabola_window,
+            )
             spl1 = fit_spline(x, y, pts_per_knot, degree, w)
-            spl_sigma = UnivariateSpline(x0_grid, sigma2, k=3, s=0)
+            _, spl_sigma, fit_window_lo, fit_window_hi = refine_x0_minimum(x0_grid, sigma2, parabola_window)
             xr = 2 * x0_opt - x
             x_all, y_all, w_all = combine(x, y, x0_opt, w)
             spl2 = fit_spline(x_all, y_all, 2 * pts_per_knot, degree, w_all)
@@ -419,6 +427,7 @@ def find(
                 x0_grid, sigma2, spl_sigma, x0_boot,
                 xlabel=xlabel, ylabel=ylabel, x_unit=x_unit,
                 invert_y=True, utc0=utc0,
+                fit_window_lo=fit_window_lo, fit_window_hi=fit_window_hi,
             )
             fig.savefig(plot, format=plot_format, dpi=150, bbox_inches="tight")
             plt.close(fig)

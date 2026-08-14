@@ -39,4 +39,4 @@ print(f"Sigma min: {result.sigma_min:.4f}")
 print(f"N points: {result.n_points}, Bootstrap iterations: {result.n_bootstrap}")
 
 # With real AAVSO data, use the CLI (magnitudes handled directly):
-# reflection-method find data.csv -x DATE-OBS -y MAG -w MAG_ERR -t iso -k 10 -d 3 -b 60 -s 42 -p output.png
+# reflection-method data.csv -x DATE-OBS -y MAG -w MAG_ERR -t iso -k 10 -d 3 -b 60 -s 42 -p output.png

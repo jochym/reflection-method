@@ -228,23 +228,33 @@ def refine_x0_minimum(
     window_lo = float(x_fit[0])
     window_hi = float(x_fit[-1])
 
-    if len(x_fit) >= 5:
-        coeffs = np.polyfit(x_fit, y_fit, 4)
-        deriv = np.polyder(coeffs)
-        roots = np.roots(deriv)
-        in_range = (roots.real >= window_lo) & (roots.real <= window_hi) & np.isreal(roots)
-        candidates = roots[in_range].real
-        if len(candidates) > 0:
-            eval_points = np.concatenate([candidates, [window_lo, window_hi]])
-            x0_opt = float(eval_points[np.argmin(np.polyval(coeffs, eval_points))])
-            x0_opt = max(x0_grid[0], min(x0_grid[-1], x0_opt))
-            return x0_opt, np.poly1d(coeffs), window_lo, window_hi
-    elif len(x_fit) >= 3:
-        coeffs = np.polyfit(x_fit, y_fit, 2)
-        if coeffs[0] > 0:
-            x0_opt = float(-coeffs[1] / (2 * coeffs[0]))
-            x0_opt = max(x0_grid[0], min(x0_grid[-1], x0_opt))
-            return x0_opt, np.poly1d(coeffs), window_lo, window_hi
+    import warnings
+    # np.RankWarning moved to numpy.exceptions in NumPy 2.0; catch both
+    rank_warning = getattr(np, "RankWarning", None)
+    if rank_warning is None:
+        try:
+            from numpy.exceptions import RankWarning as rank_warning
+        except ImportError:
+            rank_warning = RuntimeWarning
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=rank_warning)
+        if len(x_fit) >= 5:
+            coeffs = np.polyfit(x_fit, y_fit, 4)
+            deriv = np.polyder(coeffs)
+            roots = np.roots(deriv)
+            in_range = (roots.real >= window_lo) & (roots.real <= window_hi) & np.isreal(roots)
+            candidates = roots[in_range].real
+            if len(candidates) > 0:
+                eval_points = np.concatenate([candidates, [window_lo, window_hi]])
+                x0_opt = float(eval_points[np.argmin(np.polyval(coeffs, eval_points))])
+                x0_opt = max(x0_grid[0], min(x0_grid[-1], x0_opt))
+                return x0_opt, np.poly1d(coeffs), window_lo, window_hi
+        elif len(x_fit) >= 3:
+            coeffs = np.polyfit(x_fit, y_fit, 2)
+            if coeffs[0] > 0:
+                x0_opt = float(-coeffs[1] / (2 * coeffs[0]))
+                x0_opt = max(x0_grid[0], min(x0_grid[-1], x0_opt))
+                return x0_opt, np.poly1d(coeffs), window_lo, window_hi
 
     return float(x0_grid[idx_min]), np.poly1d([0.0, 0.0, float(np.median(sigma2))]), window_lo, window_hi
 

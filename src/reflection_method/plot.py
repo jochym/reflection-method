@@ -397,14 +397,18 @@ def plot_all(
     ax_sigma.plot(x0_rel, sigma2, 'o', label="σ₂(x₀)", color="mediumseagreen", markersize=3, alpha=0.7, linewidth=0)
     ax_sigma.axvline(0, color="red", linewidth=1.5)
 
-    # Fit curve drawn only over the window used for the polynomial fit
-    fit_lo = x0_grid[0] if fit_window_lo is None else fit_window_lo
-    fit_hi = x0_grid[-1] if fit_window_hi is None else fit_window_hi
-    xs_fit_rel = np.linspace(fit_lo - x0_opt, fit_hi - x0_opt, 200)
+    # Fit curve drawn over the full visible range (±3σ) for a smooth curve
+    xlim_lo, xlim_hi = -3 * x0_std, 3 * x0_std
+    xs_fit_rel = np.linspace(xlim_lo, xlim_hi, 300)
     ax_sigma.plot(xs_fit_rel, spl_sigma(xs_fit_rel + x0_opt), label="polynomial fit to σ₂", color="darkgreen", linestyle="-", linewidth=1.5)
 
+    # Mark the fit window bounds with subtle vertical lines
+    if fit_window_lo is not None and fit_window_hi is not None:
+        ax_sigma.axvline(fit_window_lo - x0_opt, color="darkgreen", linestyle=":", linewidth=0.8, alpha=0.5)
+        ax_sigma.axvline(fit_window_hi - x0_opt, color="darkgreen", linestyle=":", linewidth=0.8, alpha=0.5)
+
     # Same x-limits as the histogram (±3σ)
-    ax_sigma.set_xlim(-3 * x0_std, 3 * x0_std)
+    ax_sigma.set_xlim(xlim_lo, xlim_hi)
     # Y-limits from the points visible within the ±3σ window
     in_view = np.abs(x0_rel) <= 3 * x0_std
     sigma_min = float(sigma2[in_view].min())

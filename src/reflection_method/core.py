@@ -184,6 +184,34 @@ def combine(
     return x_all[order], y_all[order], (w_all[order] if w_all is not None else None)
 
 
+class _CenteredPoly1D:
+    """Polynomial fitted in centered coordinates, evaluates in original coordinates.
+
+    Wraps a polynomial fitted to (x - x_center) and transparently shifts
+    inputs by x_center on evaluation. Behaves like np.poly1d for callers.
+    """
+    def __init__(self, coeffs: np.ndarray, x_center: float):
+        self._poly = np.poly1d(coeffs)
+        self._center = float(x_center)
+        # Expose common poly1d attributes for compatibility
+        self.coeffs = self._poly.coeffs
+        self.order = self._poly.order
+        self.roots = self._poly.roots
+
+    def __call__(self, x):
+        return self._poly(x - self._center)
+
+    def __repr__(self):
+        return f"_CenteredPoly1D({self._poly}, center={self._center})"
+
+    def deriv(self, m=1):
+        return self._poly.deriv(m)
+
+    def __getattr__(self, name):
+        # Delegate any other attributes to underlying poly1d
+        return getattr(self._poly, name)
+
+
 def refine_x0_minimum(
     x0_grid: np.ndarray,
     sigma2: np.ndarray,
@@ -251,25 +279,16 @@ def refine_x0_minimum(
             x0_opt_c = float(eval_points[np.argmin(np.polyval(coeffs_c, eval_points))])
             x0_opt = x0_opt_c + x_center
             x0_opt = max(x0_grid[0], min(x0_grid[-1], x0_opt))
-            # Stable polynomial shift: re-fit in original coordinates
-            # Evaluate centered polynomial at points in original x range, then re-fit
-            x_eval = np.linspace(window_lo, window_hi, 10)
-            y_eval = np.polyval(coeffs_c, x_eval - x_center)
-            coeffs = np.polyfit(x_eval, y_eval, 4)
-            return x0_opt, np.poly1d(coeffs), window_lo, window_hi
+            return x0_opt, _CenteredPoly1D(coeffs_c, x_center), window_lo, window_hi
     elif len(x_fit) >= 3:
         coeffs_c = np.polyfit(x_fit_c, y_fit, 2)
         if coeffs_c[0] > 0:
             x0_opt_c = float(-coeffs_c[1] / (2 * coeffs_c[0]))
             x0_opt = x0_opt_c + x_center
             x0_opt = max(x0_grid[0], min(x0_grid[-1], x0_opt))
-            # Stable polynomial shift: re-fit in original coordinates
-            x_eval = np.linspace(window_lo, window_hi, 10)
-            y_eval = np.polyval(coeffs_c, x_eval - x_center)
-            coeffs = np.polyfit(x_eval, y_eval, 2)
-            return x0_opt, np.poly1d(coeffs), window_lo, window_hi
+            return x0_opt, _CenteredPoly1D(coeffs_c, x_center), window_lo, window_hi
 
-    return float(x0_grid[idx_min]), np.poly1d([0.0, 0.0, float(np.median(sigma2))]), window_lo, window_hi
+    return float(x0_grid[idx_min]), _CenteredPoly1D(np.array([0.0, 0.0, float(np.median(sigma2))]), 0.0), window_lo, window_hi
 
 
 def find_x0(

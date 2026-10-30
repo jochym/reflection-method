@@ -17,7 +17,6 @@ References
 
 from typing import Optional
 import numpy as np
-from math import comb
 from scipy.interpolate import LSQUnivariateSpline
 
 from .result import MinimumResult
@@ -242,36 +241,33 @@ def refine_x0_minimum(
     x_fit_c = x_fit - x_center
 
     if len(x_fit) >= 5:
-        coeffs = np.polyfit(x_fit_c, y_fit, 4)
-        deriv = np.polyder(coeffs)
+        coeffs_c = np.polyfit(x_fit_c, y_fit, 4)
+        deriv = np.polyder(coeffs_c)
         roots = np.roots(deriv)
         in_range = (roots.real >= -hw) & (roots.real <= hw) & np.isreal(roots)
         candidates = roots[in_range].real
         if len(candidates) > 0:
             eval_points = np.concatenate([candidates, [-hw, hw]])
-            x0_opt_c = float(eval_points[np.argmin(np.polyval(coeffs, eval_points))])
+            x0_opt_c = float(eval_points[np.argmin(np.polyval(coeffs_c, eval_points))])
             x0_opt = x0_opt_c + x_center
             x0_opt = max(x0_grid[0], min(x0_grid[-1], x0_opt))
-            # Convert polynomial back to original coordinates
-            # Shift P(x - x_center) to Q(x) using binomial theorem
-            shifted_coeffs = np.zeros_like(coeffs)
-            for k in range(len(coeffs)):
-                for j in range(k, len(coeffs)):
-                    # coeffs[j] * C(j, k) * (-x_center)^(j-k)
-                    shifted_coeffs[k] += coeffs[j] * comb(j, k) * ((-x_center) ** (j - k))
-            return x0_opt, np.poly1d(shifted_coeffs), window_lo, window_hi
+            # Stable polynomial shift: re-fit in original coordinates
+            # Evaluate centered polynomial at points in original x range, then re-fit
+            x_eval = np.linspace(window_lo, window_hi, 10)
+            y_eval = np.polyval(coeffs_c, x_eval - x_center)
+            coeffs = np.polyfit(x_eval, y_eval, 4)
+            return x0_opt, np.poly1d(coeffs), window_lo, window_hi
     elif len(x_fit) >= 3:
-        coeffs = np.polyfit(x_fit_c, y_fit, 2)
-        if coeffs[0] > 0:
-            x0_opt_c = float(-coeffs[1] / (2 * coeffs[0]))
+        coeffs_c = np.polyfit(x_fit_c, y_fit, 2)
+        if coeffs_c[0] > 0:
+            x0_opt_c = float(-coeffs_c[1] / (2 * coeffs_c[0]))
             x0_opt = x0_opt_c + x_center
             x0_opt = max(x0_grid[0], min(x0_grid[-1], x0_opt))
-            # Convert polynomial back to original coordinates
-            shifted_coeffs = np.zeros_like(coeffs)
-            for k in range(len(coeffs)):
-                for j in range(k, len(coeffs)):
-                    shifted_coeffs[k] += coeffs[j] * comb(j, k) * ((-x_center) ** (j - k))
-            return x0_opt, np.poly1d(shifted_coeffs), window_lo, window_hi
+            # Stable polynomial shift: re-fit in original coordinates
+            x_eval = np.linspace(window_lo, window_hi, 10)
+            y_eval = np.polyval(coeffs_c, x_eval - x_center)
+            coeffs = np.polyfit(x_eval, y_eval, 2)
+            return x0_opt, np.poly1d(coeffs), window_lo, window_hi
 
     return float(x0_grid[idx_min]), np.poly1d([0.0, 0.0, float(np.median(sigma2))]), window_lo, window_hi
 

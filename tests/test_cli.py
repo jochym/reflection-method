@@ -135,5 +135,33 @@ def test_cli_different_time_formats():
     # Just verify iso works
 
 
+def test_cli_csv_parse_error():
+    """Test that CSV parsing errors include row and column context."""
+    import tempfile
+    import json
+    
+    # Create a CSV with an invalid value in MAG column
+    csv_content = """#NAME,DATE-OBS,MAG,MAG_ERR
+V500_Peg,2026-08-08T20:00:00,12.5,0.01
+V500_Peg,2026-08-08T20:01:00,N/A,0.01
+V500_Peg,2026-08-08T20:02:00,12.6,0.01"""
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        f.write(csv_content)
+        temp_path = f.name
+    
+    try:
+        result = run_cli([
+            temp_path, "--x-col", "DATE-OBS", "--y-col", "MAG", "--w-col", "MAG_ERR",
+            "--time-format", "iso", "--pts-per-knot", "10", "--degree", "3",
+            "--n-scan", "200", "--n-bootstrap", "10", "--seed", "42",
+        ])
+        assert result.returncode != 0
+        assert "Row 2, column 'MAG': cannot convert 'N/A' to float" in result.stderr
+    finally:
+        import os
+        os.unlink(temp_path)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

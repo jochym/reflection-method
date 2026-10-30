@@ -229,3 +229,50 @@ class TestFindMinimum:
         # Results should scale accordingly
         assert abs(result_min.x0 - result_days.x0 * 24 * 60) < 0.1
         assert abs(result_min.x0_std - result_days.x0_std * 24 * 60) < 0.1
+
+
+class TestRefineX0Minimum:
+    def test_fitted_window_bounds_constrain_search(self):
+        """Regression test: minimum search constrained to actual fitted window.
+        
+        Uses a sparse/asymmetric scan grid where the theoretical window (±hw)
+        extends beyond the actual fitted data. The fix ensures the search uses
+        the actual fitted bounds [window_lo, window_hi] instead of ±hw.
+        
+        Without the fix, root filtering and endpoint evaluation would include
+        extrapolated points outside the fitted region, potentially displacing
+        the true minimum.
+        """
+        from reflection_method.core import refine_x0_minimum
+        
+        # Sparse grid: minimum at 2.2, grid points at 2.0..2.7, then jump to 10.0
+        # parabola_window=0.1 -> hw = 0.1 * (10 - 1) = 0.9
+        # idx_min at 2.2 (index 3), mask: abs(grid - 2.2) <= 0.9 -> 1.3 to 3.1
+        # Grid points in range: 2.0, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7 (8 points)
+        # window_lo=2.0, window_hi=2.7 (NOT 1.3 to 3.1 which is ±hw)
+        x0_grid = np.array([1.0, 2.0, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 10.0])
+        # Quartic sigma2 with true minimum at 2.2 (inside fitted window)
+        sigma2 = (x0_grid - 2.2)**4 + 0.01
+        
+        x0_opt, poly, window_lo, window_hi = refine_x0_minimum(
+            x0_grid, sigma2, parabola_window=0.1
+        )
+        
+        # Minimum should be at true minimum (2.2)
+        assert abs(x0_opt - 2.2) < 1e-5
+        
+        # Fitted window bounds should match actual data used (2.0 to 2.7)
+        # NOT the theoretical window (2.2 ± 0.9 = 1.3 to 3.1)
+        assert window_lo == 2.0
+        assert window_hi == 2.7
+        
+        # The polynomial should evaluate correctly at actual window edges
+        # (not at extrapolated ±hw = ±0.9 from center)
+        assert abs(poly(window_lo) - ((2.0 - 2.2)**4 + 0.01)) < 1e-6
+        assert abs(poly(window_hi) - ((2.7 - 2.2)**4 + 0.01)) < 1e-6
+        
+        # Verify the fix: if we reverted to ±hw, eval_points would include
+        # 1.3 and 3.1 (centered: -0.9 and 0.9), i.e., extrapolated outside [2.0, 2.7]
+        # The true minimum at 2.2 should be lower than extrapolated evaluations
+        assert poly(2.2) < poly(1.3)  # True minimum < extrapolated left
+        assert poly(2.2) < poly(3.1)  # True minimum < extrapolated right

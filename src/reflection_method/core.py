@@ -195,23 +195,33 @@ def combine(
     if w_all is not None:
         w_all = w_all[order]
 
-    # Deduplicate identical abscissae (can occur when x0 coincides with a data point)
-    # Average y (and w) for identical x within machine precision
-    unique_x, idx, counts = np.unique(x_all, return_index=True, return_counts=True)
-    y_dedup = np.zeros_like(unique_x)
-    if w_all is not None:
-        w_dedup = np.zeros_like(unique_x)
-    for i, ux in enumerate(unique_x):
-        mask = np.abs(x_all - ux) < 1e-12
-        y_dedup[i] = y_all[mask].mean()
-        if w_all is not None:
-            w_dedup[i] = w_all[mask].mean()
-    x_all = unique_x
-    y_all = y_dedup
-    if w_all is not None:
-        w_all = w_dedup
+    # Deduplicate abscissae within a small tolerance (1e-12).
+    # Only collapse points that are truly coincident (within floating-point noise).
+    # This avoids quadratic O(N^2) behavior and preserves scan-residual fidelity.
+    tol = 1e-12
+    dx = np.diff(x_all)
+    # Group boundaries where gap > tol
+    group_boundary = np.concatenate(([True], dx > tol))
+    group_id = np.cumsum(group_boundary) - 1
+    n_groups = int(group_id[-1] + 1)
 
-    return x_all, y_all, w_all
+    # Vectorized group averaging using bincount
+    y_dedup = np.zeros(n_groups, dtype=float)
+    if w_all is not None:
+        w_dedup = np.zeros(n_groups, dtype=float)
+
+    np.add.at(y_dedup, group_id, y_all)
+    # Count elements per group
+    counts = np.bincount(group_id, minlength=n_groups)
+    y_dedup /= counts
+
+    if w_all is not None:
+        np.add.at(w_dedup, group_id, w_all)
+        w_dedup /= counts
+
+    x_dedup = x_all[np.concatenate(([True], dx > tol))]
+
+    return x_dedup, y_dedup, w_dedup if w_all is not None else None
 
 
 class _CenteredPoly1D:

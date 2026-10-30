@@ -151,7 +151,6 @@ V500_Peg,2026-08-08T20:02:00,12.6,0.01"""
         temp_path = f.name
     
     try:
-        from tests.test_cli import run_cli
         result = run_cli([
             temp_path, "--x-col", "DATE-OBS", "--y-col", "MAG", "--w-col", "MAG_ERR",
             "--time-format", "iso", "--pts-per-knot", "10", "--degree", "3",

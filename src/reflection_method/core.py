@@ -542,6 +542,11 @@ def bootstrap_x0(
         sig = np.maximum(sig, 1e-6)
 
         x0_boot[k], _, _, _ = refine_x0_minimum(grid, sig, parabola_window)
+        # Guard against outliers: if bootstrap estimate is far from main x0,
+        # fall back to that iteration's grid minimum
+        fit_hw = parabola_window * (grid[-1] - grid[0])
+        if abs(x0_boot[k] - x0_opt) > 3 * fit_hw:
+            x0_boot[k] = float(grid[int(np.argmin(sig))])
 
     x0_std = float(x0_boot.std(ddof=1))
     x0_lo = float(np.percentile(x0_boot, 16))

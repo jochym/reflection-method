@@ -103,9 +103,31 @@ def fit_spline(
     y_sorted = y[order]
     w_sorted = w[order] if w is not None else None
 
-    xmin, xmax = float(x_sorted.min()), float(x_sorted.max())
-    n_inner = max(1, int(n / pts_per_knot))
-    n_inner = min(n_inner, max(1, n - degree - 1))
+    # Handle duplicate x values (can occur in reflection method when x0 coincides with a data point)
+    # Average y (and w) for coincident x within machine precision
+    tol = 1e-12
+    dx = np.diff(x_sorted)
+    group_boundary = np.concatenate(([True], dx > tol))
+    group_id = np.cumsum(group_boundary) - 1
+    n_groups = int(group_id[-1] + 1)
+
+    y_grouped = np.zeros(n_groups, dtype=float)
+    np.add.at(y_grouped, group_id, y_sorted)
+    counts = np.bincount(group_id, minlength=n_groups)
+    y_grouped /= counts
+
+    if w_sorted is not None:
+        w_grouped = np.zeros(n_groups, dtype=float)
+        np.add.at(w_grouped, group_id, w_sorted)
+        w_grouped /= np.bincount(group_id, minlength=n_groups)
+    else:
+        w_grouped = None
+
+    x_grouped = x_sorted[np.concatenate(([True], np.diff(x_sorted) > tol))]
+
+    xmin, xmax = float(x_grouped.min()), float(x_grouped.max())
+    n_inner = max(1, int(len(x_grouped) / pts_per_knot))
+    n_inner = min(n_inner, max(1, len(x_grouped) - degree - 1))
 
     orig_n_inner = n_inner
     while n_inner >= 1:
@@ -190,38 +212,7 @@ def combine(
         w_all = None
 
     order = np.argsort(x_all)
-    x_all = x_all[order]
-    y_all = y_all[order]
-    if w_all is not None:
-        w_all = w_all[order]
-
-    # Deduplicate abscissae within a small tolerance (1e-12).
-    # Only collapse points that are truly coincident (within floating-point noise).
-    # This avoids quadratic O(N^2) behavior and preserves scan-residual fidelity.
-    tol = 1e-12
-    dx = np.diff(x_all)
-    # Group boundaries where gap > tol
-    group_boundary = np.concatenate(([True], dx > tol))
-    group_id = np.cumsum(group_boundary) - 1
-    n_groups = int(group_id[-1] + 1)
-
-    # Vectorized group averaging using bincount
-    y_dedup = np.zeros(n_groups, dtype=float)
-    if w_all is not None:
-        w_dedup = np.zeros(n_groups, dtype=float)
-
-    np.add.at(y_dedup, group_id, y_all)
-    # Count elements per group
-    counts = np.bincount(group_id, minlength=n_groups)
-    y_dedup /= counts
-
-    if w_all is not None:
-        np.add.at(w_dedup, group_id, w_all)
-        w_dedup /= counts
-
-    x_dedup = x_all[np.concatenate(([True], dx > tol))]
-
-    return x_dedup, y_dedup, w_dedup if w_all is not None else None
+    return x_all[order], y_all[order], (w_all[order] if w_all is not None else None)
 
 
 class _CenteredPoly1D:

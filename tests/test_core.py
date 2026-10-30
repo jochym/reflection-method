@@ -86,9 +86,14 @@ class TestCombine:
         y = np.array([1.0, 2.0, 1.5, 1.0])
         x0 = 2.5
         x_all, y_all, w_all = combine(x, y, x0)
-        assert len(x_all) == 8
-        assert len(y_all) == 8
+        # With deduplication: x0=2.5 reflects [1,2,3,4] to [4,3,2,1], all x values duplicated
+        assert len(x_all) == 4
+        assert len(y_all) == 4
         assert w_all is None
+        # Check deduplication averaged correctly
+        assert np.allclose(x_all, [1.0, 2.0, 3.0, 4.0])
+        # y values are average of original and reflected at each x
+        assert np.allclose(y_all, [1.0, 1.75, 1.75, 1.0])
 
     def test_combine_with_weights(self):
         x = np.array([1.0, 2.0, 3.0])
@@ -96,9 +101,16 @@ class TestCombine:
         w = np.array([1.0, 0.5, 1.0])
         x0 = 2.0
         x_all, y_all, w_all = combine(x, y, x0, w)
-        assert len(x_all) == 6
+        # With deduplication: x0=2.0 coincides with x=2.0
+        # Original [1,2,3] reflected [3,2,1] -> combined [1,2,2,3,1,3]
+        # After dedup: 3 unique points [1,2,3]
+        assert len(x_all) == 3
         assert w_all is not None
-        assert len(w_all) == 6
+        assert len(w_all) == 3
+        # Check deduplication averaged the values at x=2.0
+        assert x_all[1] == 2.0  # x=2.0 is the second point after sorting
+        assert y_all[1] == 2.0  # y=2.0 (original and reflected both have y=2.0)
+        assert w_all[1] == 0.5  # weight averaged (same value)
 
     def test_combine_sorted(self):
         x = np.array([3.0, 1.0, 4.0, 2.0])

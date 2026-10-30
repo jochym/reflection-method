@@ -16,6 +16,7 @@ References
 """
 
 from typing import Optional
+import warnings
 import numpy as np
 from scipy.interpolate import LSQUnivariateSpline
 
@@ -106,10 +107,18 @@ def fit_spline(
     n_inner = max(1, int(n / pts_per_knot))
     n_inner = min(n_inner, max(1, n - degree - 1))
 
+    orig_n_inner = n_inner
     while n_inner >= 1:
         knots = np.linspace(xmin, xmax, n_inner + 2)[1:-1]
         try:
-            return LSQUnivariateSpline(x_sorted, y_sorted, knots, k=degree, w=w_sorted, ext=3)
+            spl = LSQUnivariateSpline(x_sorted, y_sorted, knots, k=degree, w=w_sorted, ext=3)
+            if n_inner < orig_n_inner:
+                warnings.warn(
+                    f"Reduced spline knots from {orig_n_inner} to {n_inner} "
+                    f"(data too sparse for pts_per_knot={pts_per_knot})",
+                    UserWarning, stacklevel=2
+                )
+            return spl
         except ValueError:
             n_inner //= 2
 
@@ -181,7 +190,28 @@ def combine(
         w_all = None
 
     order = np.argsort(x_all)
-    return x_all[order], y_all[order], (w_all[order] if w_all is not None else None)
+    x_all = x_all[order]
+    y_all = y_all[order]
+    if w_all is not None:
+        w_all = w_all[order]
+
+    # Deduplicate identical abscissae (can occur when x0 coincides with a data point)
+    # Average y (and w) for identical x within machine precision
+    unique_x, idx, counts = np.unique(x_all, return_index=True, return_counts=True)
+    y_dedup = np.zeros_like(unique_x)
+    if w_all is not None:
+        w_dedup = np.zeros_like(unique_x)
+    for i, ux in enumerate(unique_x):
+        mask = np.abs(x_all - ux) < 1e-12
+        y_dedup[i] = y_all[mask].mean()
+        if w_all is not None:
+            w_dedup[i] = w_all[mask].mean()
+    x_all = unique_x
+    y_all = y_dedup
+    if w_all is not None:
+        w_all = w_dedup
+
+    return x_all, y_all, w_all
 
 
 class _CenteredPoly1D:
@@ -427,7 +457,7 @@ def bootstrap_x0(
     w: Optional[np.ndarray],
     n_bootstrap: int = 60,
     n_scan_boot: int = 80,
-    x0_window: float = 0.1,
+    x0_window: float = 0.05,
     rng: Optional[np.random.Generator] = None,
     return_samples: bool = False,
     find_peak: bool = False,
@@ -465,7 +495,7 @@ def bootstrap_x0(
         Grid resolution for each bootstrap iteration's scan. Default 80
         (coarser than main scan for speed).
     x0_window : float, optional
-        Scan window fraction, same as in ``find_x0``. Default 0.1.
+        Scan window fraction, same as in ``find_x0``. Default 0.05 (smaller than main scan for stability with noisy bootstrap samples).
     find_peak : bool, optional
         If True, the eclipsing feature is a peak (maximum) of ``y`` rather
         than a dip — as when working directly in magnitudes. The per-iteration

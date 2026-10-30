@@ -192,8 +192,29 @@ def read_csv_file(
 
     # Extract columns
     x_raw = [row[x_col] for row in rows]
-    y_raw = np.array([float(row[y_col]) for row in rows])
-    w_raw = np.array([float(row[w_col]) for row in rows]) if w_col else None
+    
+    y_raw = []
+    for i, row in enumerate(rows):
+        try:
+            y_raw.append(float(row[y_col]))
+        except ValueError:
+            raise ValueError(
+                f"Row {i+1}, column '{y_col}': cannot convert '{row[y_col]}' to float"
+            )
+    y_raw = np.array(y_raw)
+    
+    if w_col:
+        w_raw = []
+        for i, row in enumerate(rows):
+            try:
+                w_raw.append(float(row[w_col]))
+            except ValueError:
+                raise ValueError(
+                    f"Row {i+1}, column '{w_col}': cannot convert '{row[w_col]}' to float"
+                )
+        w_raw = np.array(w_raw)
+    else:
+        w_raw = None
 
     t0_utc = None
     if time_format == "iso":

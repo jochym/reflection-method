@@ -50,7 +50,7 @@ def parse_datetime_column(values: list[str]) -> tuple[np.ndarray, Optional[np.da
             v_clean = v.strip().replace(" ", "T")
             dt = datetime.datetime.fromisoformat(v_clean)
             timestamps.append(dt)
-        except ValueError:
+        except (ValueError, TypeError):
             raise ValueError(f"Cannot parse datetime: {v}")
 
     # Convert to numpy datetime64[ms] (naive = UTC per AAVSO convention)
@@ -197,7 +197,7 @@ def read_csv_file(
     for i, row in enumerate(rows):
         try:
             y_raw.append(float(row[y_col]))
-        except ValueError:
+        except (ValueError, TypeError):
             raise ValueError(
                 f"Row {i+1}, column '{y_col}': cannot convert '{row[y_col]}' to float"
             )
@@ -208,7 +208,7 @@ def read_csv_file(
         for i, row in enumerate(rows):
             try:
                 w_raw.append(float(row[w_col]))
-            except ValueError:
+            except (ValueError, TypeError):
                 raise ValueError(
                     f"Row {i+1}, column '{w_col}': cannot convert '{row[w_col]}' to float"
                 )

@@ -220,6 +220,12 @@ def refine_x0_minimum(
         the median σ₂ when the fit is not possible), and ``window_lo`` /
         ``window_hi`` the bounds of the fitted window in the same units as
         ``x0_grid`` (useful for plotting).
+
+    Notes
+    -----
+    The fit centers x on the grid minimum to avoid ill-conditioning when the
+    abscissae are large (e.g., minutes from epoch ~100), which eliminates
+    numerical warnings from high-order polynomial fits.
     """
     idx_min = int(np.argmin(sigma2))
     hw = parabola_window * (x0_grid[-1] - x0_grid[0])

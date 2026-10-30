@@ -268,14 +268,19 @@ def refine_x0_minimum(
     x_center = float(x0_grid[idx_min])
     x_fit_c = x_fit - x_center
 
+    # Actual centered window bounds — use these (not hw) for root filtering
+    # and endpoint evaluation to avoid extrapolating beyond fitted data.
+    c_lo = window_lo - x_center
+    c_hi = window_hi - x_center
+
     if len(x_fit) >= 5:
         coeffs_c = np.polyfit(x_fit_c, y_fit, 4)
         deriv = np.polyder(coeffs_c)
         roots = np.roots(deriv)
-        in_range = (roots.real >= -hw) & (roots.real <= hw) & np.isreal(roots)
+        in_range = (roots.real >= c_lo) & (roots.real <= c_hi) & np.isreal(roots)
         candidates = roots[in_range].real
         if len(candidates) > 0:
-            eval_points = np.concatenate([candidates, [-hw, hw]])
+            eval_points = np.concatenate([candidates, [c_lo, c_hi]])
             x0_opt_c = float(eval_points[np.argmin(np.polyval(coeffs_c, eval_points))])
             x0_opt = x0_opt_c + x_center
             x0_opt = max(x0_grid[0], min(x0_grid[-1], x0_opt))

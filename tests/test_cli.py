@@ -185,5 +185,31 @@ V500_Peg,2026-08-08T20:02:00,12.7,0.01"""
         os.unlink(temp_path)
 
 
+def test_cli_csv_parse_error_missing_field():
+    """Test that CSV parsing errors include row and column context for missing fields (TypeError)."""
+    # Create a CSV with a missing MAG value in row 2 (short row)
+    csv_content = """#NAME,DATE-OBS,MAG,MAG_ERR
+V500_Peg,2026-08-08T20:00:00,12.5,0.01
+V500_Peg,2026-08-08T20:01:00,,0.01
+V500_Peg,2026-08-08T20:02:00,12.6,0.01"""
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        f.write(csv_content)
+        temp_path = f.name
+    
+    try:
+        result = run_cli([
+            temp_path, "--x-col", "DATE-OBS", "--y-col", "MAG", "--w-col", "MAG_ERR",
+            "--time-format", "iso", "--pts-per-knot", "10", "--degree", "3",
+            "--n-scan", "200", "--n-bootstrap", "10", "--seed", "42",
+        ])
+        assert result.returncode != 0
+        # Empty string becomes None in DictReader, float(None) raises TypeError
+        assert "Row 2, column 'MAG': cannot convert 'None' to float" in result.stderr or \
+               "Row 2, column 'MAG': cannot convert '' to float" in result.stderr
+    finally:
+        os.unlink(temp_path)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

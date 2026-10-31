@@ -16,6 +16,7 @@ References
 """
 
 from typing import Optional
+import warnings
 import numpy as np
 from scipy.interpolate import LSQUnivariateSpline
 
@@ -102,14 +103,51 @@ def fit_spline(
     y_sorted = y[order]
     w_sorted = w[order] if w is not None else None
 
-    xmin, xmax = float(x_sorted.min()), float(x_sorted.max())
-    n_inner = max(1, int(n / pts_per_knot))
-    n_inner = min(n_inner, max(1, n - degree - 1))
+    # Handle duplicate x values (can occur in reflection method when x0 coincides with a data point)
+    # Weighted average y, sum weights for coincident x within machine precision
+    tol = 1e-12
+    dx = np.diff(x_sorted)
+    group_boundary = np.concatenate(([True], dx > tol))
+    group_id = np.cumsum(group_boundary) - 1
+    n_groups = int(group_id[-1] + 1)
 
+    if w_sorted is not None:
+        # Weighted average: y_grouped = sum(w*y)/sum(w), w_grouped = sum(w)
+        w_sum = np.zeros(n_groups, dtype=float)
+        wy_sum = np.zeros(n_groups, dtype=float)
+        np.add.at(w_sum, group_id, w_sorted)
+        np.add.at(wy_sum, group_id, w_sorted * y_sorted)
+        # Avoid division by zero (shouldn't happen with positive weights)
+        mask_w = w_sum > 0
+        y_grouped = np.zeros(n_groups, dtype=float)
+        y_grouped[mask_w] = wy_sum[mask_w] / w_sum[mask_w]
+        w_grouped = w_sum
+    else:
+        # Simple average when no weights
+        y_grouped = np.zeros(n_groups, dtype=float)
+        np.add.at(y_grouped, group_id, y_sorted)
+        counts = np.bincount(group_id, minlength=n_groups)
+        y_grouped /= counts
+        w_grouped = None
+
+    x_grouped = x_sorted[np.concatenate(([True], np.diff(x_sorted) > tol))]
+
+    xmin, xmax = float(x_grouped.min()), float(x_grouped.max())
+    n_inner = max(1, int(len(x_grouped) / pts_per_knot))
+    n_inner = min(n_inner, max(1, len(x_grouped) - degree - 1))
+
+    orig_n_inner = n_inner
     while n_inner >= 1:
         knots = np.linspace(xmin, xmax, n_inner + 2)[1:-1]
         try:
-            return LSQUnivariateSpline(x_sorted, y_sorted, knots, k=degree, w=w_sorted, ext=3)
+            spl = LSQUnivariateSpline(x_sorted, y_sorted, knots, k=degree, w=w_sorted, ext=3)
+            if n_inner < orig_n_inner:
+                warnings.warn(
+                    f"Reduced spline knots from {orig_n_inner} to {n_inner} "
+                    f"(data too sparse for pts_per_knot={pts_per_knot})",
+                    UserWarning, stacklevel=2
+                )
+            return spl
         except ValueError:
             n_inner //= 2
 
@@ -427,7 +465,7 @@ def bootstrap_x0(
     w: Optional[np.ndarray],
     n_bootstrap: int = 60,
     n_scan_boot: int = 80,
-    x0_window: float = 0.1,
+    x0_window: float = 0.05,
     rng: Optional[np.random.Generator] = None,
     return_samples: bool = False,
     find_peak: bool = False,
@@ -465,7 +503,7 @@ def bootstrap_x0(
         Grid resolution for each bootstrap iteration's scan. Default 80
         (coarser than main scan for speed).
     x0_window : float, optional
-        Scan window fraction, same as in ``find_x0``. Default 0.1.
+        Scan window fraction, same as in ``find_x0``. Default 0.05 (smaller than main scan for stability with noisy bootstrap samples).
     find_peak : bool, optional
         If True, the eclipsing feature is a peak (maximum) of ``y`` rather
         than a dip — as when working directly in magnitudes. The per-iteration

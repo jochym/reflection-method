@@ -104,23 +104,30 @@ def fit_spline(
     w_sorted = w[order] if w is not None else None
 
     # Handle duplicate x values (can occur in reflection method when x0 coincides with a data point)
-    # Average y (and w) for coincident x within machine precision
+    # Weighted average y, sum weights for coincident x within machine precision
     tol = 1e-12
     dx = np.diff(x_sorted)
     group_boundary = np.concatenate(([True], dx > tol))
     group_id = np.cumsum(group_boundary) - 1
     n_groups = int(group_id[-1] + 1)
 
-    y_grouped = np.zeros(n_groups, dtype=float)
-    np.add.at(y_grouped, group_id, y_sorted)
-    counts = np.bincount(group_id, minlength=n_groups)
-    y_grouped /= counts
-
     if w_sorted is not None:
-        w_grouped = np.zeros(n_groups, dtype=float)
-        np.add.at(w_grouped, group_id, w_sorted)
-        w_grouped /= np.bincount(group_id, minlength=n_groups)
+        # Weighted average: y_grouped = sum(w*y)/sum(w), w_grouped = sum(w)
+        w_sum = np.zeros(n_groups, dtype=float)
+        wy_sum = np.zeros(n_groups, dtype=float)
+        np.add.at(w_sum, group_id, w_sorted)
+        np.add.at(wy_sum, group_id, w_sorted * y_sorted)
+        # Avoid division by zero (shouldn't happen with positive weights)
+        mask_w = w_sum > 0
+        y_grouped = np.zeros(n_groups, dtype=float)
+        y_grouped[mask_w] = wy_sum[mask_w] / w_sum[mask_w]
+        w_grouped = w_sum
     else:
+        # Simple average when no weights
+        y_grouped = np.zeros(n_groups, dtype=float)
+        np.add.at(y_grouped, group_id, y_sorted)
+        counts = np.bincount(group_id, minlength=n_groups)
+        y_grouped /= counts
         w_grouped = None
 
     x_grouped = x_sorted[np.concatenate(([True], np.diff(x_sorted) > tol))]

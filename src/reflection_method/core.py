@@ -16,6 +16,7 @@ References
 """
 
 from typing import Optional
+import warnings
 import numpy as np
 from scipy.interpolate import LSQUnivariateSpline
 
@@ -79,6 +80,13 @@ def fit_spline(
     extrapolation beyond the data range. This is a safety feature; the caller
     should ensure evaluation points are within the data range.
 
+    Repeated abscissae are allowed and are kept as separate observations. In
+    the reflection method a reflected point can land exactly on another
+    measurement, giving two points at the same ``x`` with different ``y``.
+    ``LSQUnivariateSpline`` accepts non-decreasing ``x`` (scipy >= 1.10, the
+    minimum supported version) and fits such points as ordinary weighted
+    least-squares rows.
+
     Examples
     --------
     >>> import numpy as np
@@ -96,7 +104,7 @@ def fit_spline(
     if n < degree + 2:
         raise ValueError(f"Too few points ({n}) for spline degree {degree}.")
 
-    # Ensure x is sorted (spline requires monotonic x)
+    # Ensure x is sorted (spline requires non-decreasing x)
     order = np.argsort(x)
     x_sorted = x[order]
     y_sorted = y[order]
@@ -106,10 +114,18 @@ def fit_spline(
     n_inner = max(1, int(n / pts_per_knot))
     n_inner = min(n_inner, max(1, n - degree - 1))
 
+    orig_n_inner = n_inner
     while n_inner >= 1:
         knots = np.linspace(xmin, xmax, n_inner + 2)[1:-1]
         try:
-            return LSQUnivariateSpline(x_sorted, y_sorted, knots, k=degree, w=w_sorted, ext=3)
+            spl = LSQUnivariateSpline(x_sorted, y_sorted, knots, k=degree, w=w_sorted, ext=3)
+            if n_inner < orig_n_inner:
+                warnings.warn(
+                    f"Reduced spline knots from {orig_n_inner} to {n_inner} "
+                    f"(data too sparse for pts_per_knot={pts_per_knot})",
+                    UserWarning, stacklevel=2
+                )
+            return spl
         except ValueError:
             n_inner //= 2
 
@@ -465,7 +481,10 @@ def bootstrap_x0(
         Grid resolution for each bootstrap iteration's scan. Default 80
         (coarser than main scan for speed).
     x0_window : float, optional
-        Scan window fraction, same as in ``find_x0``. Default 0.1.
+        Scan window fraction, same as in ``find_x0``. Default 0.1. It must stay
+        wide enough to contain the minimum for every resampled sample, whose
+        coarse initial guess is itself noisy: narrowing it biases the
+        bootstrap distribution.
     find_peak : bool, optional
         If True, the eclipsing feature is a peak (maximum) of ``y`` rather
         than a dip — as when working directly in magnitudes. The per-iteration

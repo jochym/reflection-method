@@ -1,7 +1,10 @@
 """Unit tests for core reflection-method algorithm."""
 
+import warnings
+
 import numpy as np
 import pytest
+from scipy.interpolate import LSQUnivariateSpline
 
 from reflection_method.core import (
     fit_spline,
@@ -31,7 +34,6 @@ def make_synthetic_eclipsing(
         np.exp(-((phase - 0.0) ** 2) / (2 * 0.03**2))
         + np.exp(-((phase - 1.0) ** 2) / (2 * 0.03**2))
     )
-
     flux = 1.0 - primary - secondary + rng.normal(0.0, noise, n)
     return phase, flux
 
@@ -70,6 +72,51 @@ class TestFitSpline:
         y_pred = spl(np.sort(x))
         assert np.all(np.isfinite(y_pred))
 
+    def test_duplicate_abscissae_are_ordinary_data(self):
+        # A reflected point can land exactly on another measurement: two
+        # observations at the same x, with different y and weights.
+        x = np.linspace(0.0, 4.0, 40)
+        y = np.sin(x)
+        w = np.linspace(0.5, 1.5, x.size)
+        x_dup = np.append(x, x[17])
+        y_dup = np.append(y, y[17] + 0.3)
+        w_dup = np.append(w, 0.4 * w[17])
+
+        spl = fit_spline(x_dup, y_dup, pts_per_knot=4, degree=3, w=w_dup)
+
+        # Both rows are kept: their residuals differ by the y difference, so
+        # neither point was dropped, averaged or reweighted.
+        tied = x_dup == x_dup[17]
+        assert np.count_nonzero(tied) == 2
+        assert np.ptp((y_dup - spl(x_dup))[tied]) == pytest.approx(0.3, abs=1e-9)
+
+        # The fit solves the same weighted least-squares problem as a single
+        # merged row with W = hypot(w_i, w_j) and a w^2-weighted mean y. (The
+        # merge is only used here, as the reference; fit_spline keeps the rows.)
+        wi, wj = w[17], 0.4 * w[17]
+        y_m = y.copy()
+        w_m = w.copy()
+        y_m[17] = (wi**2 * y[17] + wj**2 * (y[17] + 0.3)) / (wi**2 + wj**2)
+        w_m[17] = np.hypot(wi, wj)
+        ref = LSQUnivariateSpline(x, y_m, spl.get_knots()[1:-1], k=3, w=w_m, ext=3)
+
+        xs = np.linspace(x[0], x[-1], 200)
+        assert np.allclose(spl(xs), ref(xs), rtol=0, atol=1e-12)
+
+    def test_knot_reduction_warns(self):
+        # 15 points with pts_per_knot=1 ask for 11 interior knots; FITPACK
+        # cannot place them, so fit_spline halves the count and warns.
+        x = np.sort(np.random.default_rng(0).uniform(0, 1, 15))
+        y = np.sin(x)
+        with pytest.warns(UserWarning, match="Reduced spline knots from 11 to 5"):
+            fit_spline(x, y, pts_per_knot=1, degree=3)
+
+        # Dense data need no reduction, so nothing is reported.
+        x, y = make_synthetic_eclipsing(100, seed=5)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            fit_spline(x, y, pts_per_knot=10, degree=3)
+
 
 class TestSplineVariance:
     def test_variance_positive(self):
@@ -86,9 +133,18 @@ class TestCombine:
         y = np.array([1.0, 2.0, 1.5, 1.0])
         x0 = 2.5
         x_all, y_all, w_all = combine(x, y, x0)
+        # x0=2.5 reflects [1,2,3,4] to [4,3,2,1], all x values appear twice
         assert len(x_all) == 8
         assert len(y_all) == 8
         assert w_all is None
+        # Sorted order
+        assert np.allclose(x_all, [1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0])
+        # y values: sorted by x, y order for equal x is not guaranteed
+        # x=1.0 -> y=[1.0, 1.0], x=2.0 -> y=[2.0, 1.5], x=3.0 -> y=[1.5, 2.0], x=4.0 -> y=[1.0, 1.0]
+        assert np.allclose(y_all[0:2], [1.0, 1.0])  # x=1.0
+        assert set(y_all[2:4]) == {1.5, 2.0}        # x=2.0
+        assert set(y_all[4:6]) == {1.5, 2.0}        # x=3.0
+        assert np.allclose(y_all[6:8], [1.0, 1.0])  # x=4.0
 
     def test_combine_with_weights(self):
         x = np.array([1.0, 2.0, 3.0])
@@ -96,9 +152,18 @@ class TestCombine:
         w = np.array([1.0, 0.5, 1.0])
         x0 = 2.0
         x_all, y_all, w_all = combine(x, y, x0, w)
+        # x0=2.0 coincides with x=2.0
+        # Original [1,2,3] reflected [3,2,1] -> combined [1,2,2,3,1,3] -> sorted [1,1,2,2,3,3]
         assert len(x_all) == 6
         assert w_all is not None
         assert len(w_all) == 6
+        # Check order and values
+        assert np.allclose(x_all, [1.0, 1.0, 2.0, 2.0, 3.0, 3.0])
+        # At x=2.0, y=2.0 appears twice (original and reflected), w=0.5 appears twice
+        idx_2 = np.where(x_all == 2.0)[0]
+        assert len(idx_2) == 2
+        assert np.allclose(y_all[idx_2], [2.0, 2.0])
+        assert np.allclose(w_all[idx_2], [0.5, 0.5])
 
     def test_combine_sorted(self):
         x = np.array([3.0, 1.0, 4.0, 2.0])
@@ -233,46 +298,33 @@ class TestFindMinimum:
 
 class TestRefineX0Minimum:
     def test_fitted_window_bounds_constrain_search(self):
-        """Regression test: minimum search constrained to actual fitted window.
-        
-        Uses a sparse/asymmetric scan grid where the theoretical window (±hw)
-        extends beyond the actual fitted data. The fix ensures the search uses
-        the actual fitted bounds [window_lo, window_hi] instead of ±hw.
-        
-        Without the fix, root filtering and endpoint evaluation would include
-        extrapolated points outside the fitted region, potentially displacing
-        the true minimum.
-        """
+        """The refinement must not leave the interval it fitted."""
         from reflection_method.core import refine_x0_minimum
-        
-        # Sparse grid: minimum at 2.2, grid points at 2.0..2.7, then jump to 10.0
-        # parabola_window=0.1 -> hw = 0.1 * (10 - 1) = 0.9
-        # idx_min at 2.2 (index 3), mask: abs(grid - 2.2) <= 0.9 -> 1.3 to 3.1
-        # Grid points in range: 2.0, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7 (8 points)
-        # window_lo=2.0, window_hi=2.7 (NOT 1.3 to 3.1 which is ±hw)
-        x0_grid = np.array([1.0, 2.0, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 10.0])
-        # Quartic sigma2 with true minimum at 2.2 (inside fitted window)
-        sigma2 = (x0_grid - 2.2)**4 + 0.01
-        
-        x0_opt, poly, window_lo, window_hi = refine_x0_minimum(
-            x0_grid, sigma2, parabola_window=0.1
+
+        x0_grid = np.linspace(0, 10, 11)
+        sigma2 = np.full(x0_grid.size, 10.0)
+        # Sparse, asymmetric curve inside the fitted window (x = 3..7): the
+        # quartic through these points has its lowest stationary point far
+        # outside that window.
+        sigma2[3:8] = [4.074, 1.245, 1.083, 1.756, 2.100]
+
+        x0_opt, _, fit_lo, fit_hi = refine_x0_minimum(
+            x0_grid, sigma2, parabola_window=0.2
         )
-        
-        # Minimum should be at true minimum (2.2)
-        assert abs(x0_opt - 2.2) < 1e-5
-        
-        # Fitted window bounds should match actual data used (2.0 to 2.7)
-        # NOT the theoretical window (2.2 ± 0.9 = 1.3 to 3.1)
-        assert window_lo == 2.0
-        assert window_hi == 2.7
-        
-        # The polynomial should evaluate correctly at actual window edges
-        # (not at extrapolated ±hw = ±0.9 from center)
-        assert abs(poly(window_lo) - ((2.0 - 2.2)**4 + 0.01)) < 1e-6
-        assert abs(poly(window_hi) - ((2.7 - 2.2)**4 + 0.01)) < 1e-6
-        
-        # Verify the fix: if we reverted to ±hw, eval_points would include
-        # 1.3 and 3.1 (centered: -0.9 and 0.9), i.e., extrapolated outside [2.0, 2.7]
-        # The true minimum at 2.2 should be lower than extrapolated evaluations
-        assert poly(2.2) < poly(1.3)  # True minimum < extrapolated left
-        assert poly(2.2) < poly(3.1)  # True minimum < extrapolated right
+
+        assert fit_lo == 3.0 and fit_hi == 7.0
+        assert fit_lo <= x0_opt <= fit_hi
+
+        # Without the fitted-window restriction the run would jump to the far
+        # stationary point (x ~ 10.2), whose value is much lower.
+        mask = (x0_grid >= fit_lo) & (x0_grid <= fit_hi)
+        coeffs = np.polyfit(x0_grid[mask] - 5.0, sigma2[mask], 4)
+        roots = np.roots(np.polyder(coeffs))
+        roots = roots[np.isreal(roots)].real
+        best = float(roots[np.argmin(np.polyval(coeffs, roots))]) + 5.0
+        assert best > fit_hi + 2.0
+        assert np.polyval(coeffs, best - 5.0) < np.polyval(coeffs, x0_opt - 5.0)
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

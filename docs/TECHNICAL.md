@@ -69,6 +69,11 @@ This residual bootstrap preserves the noise structure while reflecting the uncer
 - **Degree:** Configurable (default `k=3`, cubic).
 - **Extrapolation:** `ext=3` — raises error outside knot range (prevents silent extrapolation).
 - **Weights:** Supported via `w` parameter (inverse variance weights).
+- **Repeated abscissae:** kept as separate observations. The reflection method
+  produces them whenever a reflected point lands exactly on another
+  measurement (or on itself, when `x0` is a data point). `LSQUnivariateSpline`
+  accepts non-decreasing `x` (SciPy ≥ 1.10) and fits the duplicated rows as
+  ordinary weighted least-squares points, so σ₂ counts both residuals.
 
 ### 3.2 Scanning Procedure
 

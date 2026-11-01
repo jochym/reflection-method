@@ -62,7 +62,14 @@ centered on `x0`. All `x0*` values share the units of the input `x` array.
 Fit a least-squares B-spline (`scipy.interpolate.LSQUnivariateSpline`) with
 automatically placed knots. The number of interior knots is derived from
 `pts_per_knot` (points per knot) and adaptively halved until the fit
-succeeds. Uses `ext=3`, so evaluation outside the knot range raises.
+succeeds; a `UserWarning` is emitted when the reduction happens. Uses
+`ext=3`, so evaluation outside the knot range raises.
+
+Repeated abscissae are allowed and kept as separate observations — the
+reflection method produces them whenever a reflected point lands exactly on
+another measurement — and are never merged or averaged. `scipy` ≥ 1.10, the
+minimum supported version, accepts non-decreasing `x` and fits such points
+as ordinary weighted least-squares rows.
 
 - **Parameters**: `x`, `y` — 1-D arrays of equal length; `pts_per_knot` —
   target points per knot (default 10); `degree` — spline degree 1–5
@@ -138,6 +145,9 @@ iteration's minimum is refined with the same local polynomial fit as
 - **Parameters**: `spl1` — initial spline fit to the original data;
   `n_bootstrap` — iterations (default 60; use 100–200 for tighter CIs);
   `n_scan_boot` — per-iteration scan resolution (default 80);
+  `x0_window` — scan window fraction (default 0.1). Keep it wide enough to
+  contain the minimum of every resampled sample: each iteration's initial
+  guess is itself noisy, and a narrower window biases the distribution;
   `rng` — `numpy.random.Generator` (default: new PCG64 generator; pass a
   seeded generator for reproducibility); `return_samples` — when True,
   append the array of individual bootstrap estimates to the return value;

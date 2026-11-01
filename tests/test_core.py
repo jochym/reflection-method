@@ -1,5 +1,7 @@
 """Unit tests for core reflection-method algorithm."""
 
+import warnings
+
 import numpy as np
 import pytest
 from scipy.interpolate import LSQUnivariateSpline
@@ -100,6 +102,20 @@ class TestFitSpline:
 
         xs = np.linspace(x[0], x[-1], 200)
         assert np.allclose(spl(xs), ref(xs), rtol=0, atol=1e-12)
+
+    def test_knot_reduction_warns(self):
+        # 15 points with pts_per_knot=1 ask for 11 interior knots; FITPACK
+        # cannot place them, so fit_spline halves the count and warns.
+        x = np.sort(np.random.default_rng(0).uniform(0, 1, 15))
+        y = np.sin(x)
+        with pytest.warns(UserWarning, match="Reduced spline knots from 11 to 5"):
+            fit_spline(x, y, pts_per_knot=1, degree=3)
+
+        # Dense data need no reduction, so nothing is reported.
+        x, y = make_synthetic_eclipsing(100, seed=5)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            fit_spline(x, y, pts_per_knot=10, degree=3)
 
 
 class TestSplineVariance:

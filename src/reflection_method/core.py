@@ -80,6 +80,12 @@ def fit_spline(
     extrapolation beyond the data range. This is a safety feature; the caller
     should ensure evaluation points are within the data range.
 
+    Repeated abscissae are allowed and are kept as separate observations. In
+    the reflection method a reflected point can land exactly on another
+    measurement, giving two points at the same ``x`` with different ``y``;
+    ``LSQUnivariateSpline`` accepts non-decreasing ``x`` and fits them as
+    ordinary weighted least-squares rows.
+
     Examples
     --------
     >>> import numpy as np
@@ -97,44 +103,15 @@ def fit_spline(
     if n < degree + 2:
         raise ValueError(f"Too few points ({n}) for spline degree {degree}.")
 
-    # Ensure x is sorted (spline requires monotonic x)
+    # Ensure x is sorted (spline requires non-decreasing x)
     order = np.argsort(x)
     x_sorted = x[order]
     y_sorted = y[order]
     w_sorted = w[order] if w is not None else None
 
-    # Handle duplicate x values (can occur in reflection method when x0 coincides with a data point)
-    # Weighted average y, sum weights for coincident x within machine precision
-    tol = 1e-12
-    dx = np.diff(x_sorted)
-    group_boundary = np.concatenate(([True], dx > tol))
-    group_id = np.cumsum(group_boundary) - 1
-    n_groups = int(group_id[-1] + 1)
-
-    if w_sorted is not None:
-        # Weighted average: y_grouped = sum(w*y)/sum(w), w_grouped = sum(w)
-        w_sum = np.zeros(n_groups, dtype=float)
-        wy_sum = np.zeros(n_groups, dtype=float)
-        np.add.at(w_sum, group_id, w_sorted)
-        np.add.at(wy_sum, group_id, w_sorted * y_sorted)
-        # Avoid division by zero (shouldn't happen with positive weights)
-        mask_w = w_sum > 0
-        y_grouped = np.zeros(n_groups, dtype=float)
-        y_grouped[mask_w] = wy_sum[mask_w] / w_sum[mask_w]
-        w_grouped = w_sum
-    else:
-        # Simple average when no weights
-        y_grouped = np.zeros(n_groups, dtype=float)
-        np.add.at(y_grouped, group_id, y_sorted)
-        counts = np.bincount(group_id, minlength=n_groups)
-        y_grouped /= counts
-        w_grouped = None
-
-    x_grouped = x_sorted[np.concatenate(([True], np.diff(x_sorted) > tol))]
-
-    xmin, xmax = float(x_grouped.min()), float(x_grouped.max())
-    n_inner = max(1, int(len(x_grouped) / pts_per_knot))
-    n_inner = min(n_inner, max(1, len(x_grouped) - degree - 1))
+    xmin, xmax = float(x_sorted.min()), float(x_sorted.max())
+    n_inner = max(1, int(n / pts_per_knot))
+    n_inner = min(n_inner, max(1, n - degree - 1))
 
     orig_n_inner = n_inner
     while n_inner >= 1:

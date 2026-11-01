@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from scipy.interpolate import make_lsq_spline
 
 from reflection_method.core import (
     fit_spline,
@@ -68,6 +69,33 @@ class TestFitSpline:
         # Should work and produce reasonable values
         y_pred = spl(np.sort(x))
         assert np.all(np.isfinite(y_pred))
+
+    def test_duplicate_abscissae_are_ordinary_data(self):
+        # A reflected point can land exactly on another measurement: two
+        # observations at the same x, with different y and weights.
+        x = np.linspace(0.0, 4.0, 40)
+        y = np.sin(x)
+        w = np.linspace(0.5, 1.5, x.size)
+        x_dup = np.append(x, x[17])
+        y_dup = np.append(y, y[17] + 0.3)
+        w_dup = np.append(w, w[17])
+
+        spl = fit_spline(x_dup, y_dup, pts_per_knot=4, degree=3, w=w_dup)
+
+        # The fit must be the plain weighted least-squares fit over the
+        # duplicated rows - nothing merged, averaged or reweighted.
+        order = np.argsort(x_dup)
+        gk = spl.get_knots()
+        t = np.concatenate([[gk[0]] * 4, gk[1:-1], [gk[-1]] * 4])
+        ref = make_lsq_spline(x_dup[order], y_dup[order], t, k=3, w=w_dup[order])
+        xs = np.linspace(x[0], x[-1], 200)
+        assert np.allclose(spl(xs), ref(xs), rtol=0, atol=1e-12)
+
+        # Both residuals of the tied pair are counted in sigma2.
+        assert np.count_nonzero(x_dup == x_dup[17]) == 2
+        assert spline_variance(spl, x_dup, y_dup) == pytest.approx(
+            float(np.mean((y_dup - ref(x_dup)) ** 2)), abs=1e-15
+        )
 
 
 class TestSplineVariance:

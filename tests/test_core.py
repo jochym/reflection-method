@@ -282,20 +282,32 @@ class TestFindMinimum:
 
 class TestRefineX0Minimum:
     def test_fitted_window_bounds_constrain_search(self):
-        """Ensure fitted window bounds constrain the refined minimum search."""
-        # Create a symmetric quadratic sigma2 with minimum at known location
-        x0_grid = np.linspace(0, 10, 100)
-        true_min = 5.0
-        sigma2 = (x0_grid - true_min) ** 2 + 0.01
-
+        """The refinement must not leave the interval it fitted."""
         from reflection_method.core import refine_x0_minimum
 
-        x0_opt, _, fit_lo, fit_hi = refine_x0_minimum(x0_grid, sigma2, parabola_window=0.1)
+        x0_grid = np.linspace(0, 10, 11)
+        sigma2 = np.full(x0_grid.size, 10.0)
+        # Sparse, asymmetric curve inside the fitted window (x = 3..7): the
+        # quartic through these points has its lowest stationary point far
+        # outside that window.
+        sigma2[3:8] = [4.074, 1.245, 1.083, 1.756, 2.100]
 
-        # Fitted window should be around the minimum
-        assert fit_lo < x0_opt < fit_hi
-        # Minimum should be found accurately
-        assert abs(x0_opt - true_min) < 0.01
+        x0_opt, _, fit_lo, fit_hi = refine_x0_minimum(
+            x0_grid, sigma2, parabola_window=0.2
+        )
+
+        assert fit_lo == 3.0 and fit_hi == 7.0
+        assert fit_lo <= x0_opt <= fit_hi
+
+        # Without the fitted-window restriction the run would jump to the far
+        # stationary point (x ~ 10.2), whose value is much lower.
+        mask = (x0_grid >= fit_lo) & (x0_grid <= fit_hi)
+        coeffs = np.polyfit(x0_grid[mask] - 5.0, sigma2[mask], 4)
+        roots = np.roots(np.polyder(coeffs))
+        roots = roots[np.isreal(roots)].real
+        best = float(roots[np.argmin(np.polyval(coeffs, roots))]) + 5.0
+        assert best > fit_hi + 2.0
+        assert np.polyval(coeffs, best - 5.0) < np.polyval(coeffs, x0_opt - 5.0)
 
 
 if __name__ == "__main__":

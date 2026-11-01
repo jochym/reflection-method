@@ -443,7 +443,7 @@ def bootstrap_x0(
     w: Optional[np.ndarray],
     n_bootstrap: int = 60,
     n_scan_boot: int = 80,
-    x0_window: float = 0.05,
+    x0_window: float = 0.1,
     rng: Optional[np.random.Generator] = None,
     return_samples: bool = False,
     find_peak: bool = False,
@@ -481,9 +481,10 @@ def bootstrap_x0(
         Grid resolution for each bootstrap iteration's scan. Default 80
         (coarser than main scan for speed).
     x0_window : float, optional
-        Scan window fraction, same as in ``find_x0``. Default 0.05: bootstrap
-        samples are noisier, so a narrower window keeps each iteration on the
-        same feature.
+        Scan window fraction, same as in ``find_x0``. Default 0.1. It must stay
+        wide enough to contain the minimum for every resampled sample, whose
+        coarse initial guess is itself noisy: narrowing it biases the
+        bootstrap distribution.
     find_peak : bool, optional
         If True, the eclipsing feature is a peak (maximum) of ``y`` rather
         than a dip — as when working directly in magnitudes. The per-iteration

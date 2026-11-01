@@ -69,11 +69,16 @@ This residual bootstrap preserves the noise structure while reflecting the uncer
 - **Degree:** Configurable (default `k=3`, cubic).
 - **Extrapolation:** `ext=3` — raises error outside knot range (prevents silent extrapolation).
 - **Weights:** Supported via `w` parameter (inverse variance weights).
+- **Repeated abscissae:** kept as separate observations. The reflection method
+  produces them whenever a reflected point lands exactly on another
+  measurement (or on itself, when `x0` is a data point). `LSQUnivariateSpline`
+  accepts non-decreasing `x` (SciPy ≥ 1.10) and fits the duplicated rows as
+  ordinary weighted least-squares points, so σ₂ counts both residuals.
 
 ### 3.2 Scanning Procedure
 
 1. **Initial guess:** Minimum of coarse spline fit to original data (2001-point grid).
-2. **Window:** `± x0_window * (xmax - xmin)` around guess (default 10% of range).
+2. **Window:** `± x0_window * (xmax - xmin)` around guess (default 10% of range; 5% in the bootstrap iterations).
 3. **Grid:** `n_scan` points (default 200) linearly spaced in window.
 4. **Refinement:** A local polynomial fit to the `σ₂(x₀)` grid.
 
@@ -207,7 +212,7 @@ The combined dataset (original + reflected) can be viewed as a form of self-cons
 | `pts_per_knot` | 10 | 5–20; smaller = more flexible, larger = smoother. For sparse data, use larger values. |
 | `degree` | 3 | 3 (cubic) standard. Degree 1 for very noisy data, 4–5 only for very dense, smooth curves. |
 | `n_scan` | 200 | Sufficient for smooth `σ₂` curve. Increase for very broad minima. |
-| `x0_window` | 0.1 | 5–20% of range. Must contain true minimum. Check scan plot. |
+| `x0_window` | 0.1 | 5–20% of range. Must contain true minimum. Check scan plot. `bootstrap_x0` uses 0.05: bootstrap samples are noisier, so a narrower window keeps them on the same feature. |
 | `parabola_window` | 0.05 | 2–10% of scan range. Window for the polynomial refinement; wider = more smoothing, narrower = more local. |
 | `n_bootstrap` | 60 | 50–200. More = better CI precision, slower. |
 | `n_scan_boot` | 80 | Coarser than main scan for speed. |

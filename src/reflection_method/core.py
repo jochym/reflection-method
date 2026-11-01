@@ -82,9 +82,10 @@ def fit_spline(
 
     Repeated abscissae are allowed and are kept as separate observations. In
     the reflection method a reflected point can land exactly on another
-    measurement, giving two points at the same ``x`` with different ``y``;
-    ``LSQUnivariateSpline`` accepts non-decreasing ``x`` and fits them as
-    ordinary weighted least-squares rows.
+    measurement, giving two points at the same ``x`` with different ``y``.
+    ``LSQUnivariateSpline`` accepts non-decreasing ``x`` (scipy >= 1.10, the
+    minimum supported version) and fits such points as ordinary weighted
+    least-squares rows.
 
     Examples
     --------
@@ -480,7 +481,9 @@ def bootstrap_x0(
         Grid resolution for each bootstrap iteration's scan. Default 80
         (coarser than main scan for speed).
     x0_window : float, optional
-        Scan window fraction, same as in ``find_x0``. Default 0.05 (smaller than main scan for stability with noisy bootstrap samples).
+        Scan window fraction, same as in ``find_x0``. Default 0.05: bootstrap
+        samples are noisier, so a narrower window keeps each iteration on the
+        same feature.
     find_peak : bool, optional
         If True, the eclipsing feature is a peak (maximum) of ``y`` rather
         than a dip — as when working directly in magnitudes. The per-iteration

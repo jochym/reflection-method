@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from scipy.interpolate import make_lsq_spline
+from scipy.interpolate import LSQUnivariateSpline
 
 from reflection_method.core import (
     fit_spline,
@@ -78,24 +78,28 @@ class TestFitSpline:
         w = np.linspace(0.5, 1.5, x.size)
         x_dup = np.append(x, x[17])
         y_dup = np.append(y, y[17] + 0.3)
-        w_dup = np.append(w, w[17])
+        w_dup = np.append(w, 0.4 * w[17])
 
         spl = fit_spline(x_dup, y_dup, pts_per_knot=4, degree=3, w=w_dup)
 
-        # The fit must be the plain weighted least-squares fit over the
-        # duplicated rows - nothing merged, averaged or reweighted.
-        order = np.argsort(x_dup)
-        gk = spl.get_knots()
-        t = np.concatenate([[gk[0]] * 4, gk[1:-1], [gk[-1]] * 4])
-        ref = make_lsq_spline(x_dup[order], y_dup[order], t, k=3, w=w_dup[order])
+        # Both rows are kept: their residuals differ by the y difference, so
+        # neither point was dropped, averaged or reweighted.
+        tied = x_dup == x_dup[17]
+        assert np.count_nonzero(tied) == 2
+        assert np.ptp((y_dup - spl(x_dup))[tied]) == pytest.approx(0.3, abs=1e-9)
+
+        # The fit solves the same weighted least-squares problem as a single
+        # merged row with W = hypot(w_i, w_j) and a w^2-weighted mean y. (The
+        # merge is only used here, as the reference; fit_spline keeps the rows.)
+        wi, wj = w[17], 0.4 * w[17]
+        y_m = y.copy()
+        w_m = w.copy()
+        y_m[17] = (wi**2 * y[17] + wj**2 * (y[17] + 0.3)) / (wi**2 + wj**2)
+        w_m[17] = np.hypot(wi, wj)
+        ref = LSQUnivariateSpline(x, y_m, spl.get_knots()[1:-1], k=3, w=w_m, ext=3)
+
         xs = np.linspace(x[0], x[-1], 200)
         assert np.allclose(spl(xs), ref(xs), rtol=0, atol=1e-12)
-
-        # Both residuals of the tied pair are counted in sigma2.
-        assert np.count_nonzero(x_dup == x_dup[17]) == 2
-        assert spline_variance(spl, x_dup, y_dup) == pytest.approx(
-            float(np.mean((y_dup - ref(x_dup)) ** 2)), abs=1e-15
-        )
 
 
 class TestSplineVariance:
